@@ -1,0 +1,86 @@
+import streamlit as st
+import pandas as pd
+import datetime
+import os
+import zipfile
+import io
+
+# Configuración de la página con estética Safara
+st.set_page_config(page_title="Safara Percussion - Gestión de Gastos", page_icon="🥁", layout="wide")
+
+# Estilos CSS personalizados inspirados en la identidad visual de Safara (Negro y Amarillo vibrante)
+st.markdown("""
+    <style>
+    .main { background-color: #FAFAFA; }
+    .stButton>button { background-color: #000000; color: #FFEB3B; border-radius: 8px; font-weight: 700; border: 2px solid #FFEB3B; }
+    .stButton>button:hover { background-color: #FFEB3B; color: #000000; }
+    .safara-header { background-color: #000000; padding: 20px; border-radius: 12px; text-align: center; color: #FFEB3B; border-bottom: 4px solid #FF5722; }
+    </style>
+""", unsafe_allow_html=True)
+
+RECEIPTS_DIR = "recibos_subidos"
+os.makedirs(RECEIPTS_DIR, exist_ok=True)
+
+# Base de datos simulada en memoria
+if "banco_caja_rural" not in st.session_state:
+    st.session_state.banco_caja_rural = 1250.50  # Saldo actual en Caja Rural
+
+if "gastos" not in st.session_state:
+    st.session_state.gastos = [
+        {
+            "id": 1,
+            "fecha_gasto": datetime.date(2026, 10, 5),
+            "hora_subida": "2026-10-05 16:30:00",
+            "comercio": "Tam Tam Percusión",
+            "importe": 89.40,
+            "moneda": "EUR",
+            "pagador": "Diego",
+            "metodo_pago": "Tarjeta personal",
+            "reembolsado": False,
+            "ref_transferencia": "",
+            "categoria": "Material y Recambios",
+            "nota": "Compra de baquetas para ensayo",
+            "recibo": "tam_tam_2026.png"
+        }
+    ]
+
+# Configuración de usuarios de la asociación y los 5 administradores de la junta
+if "usuarios_roles" not in st.session_state:
+    st.session_state.usuarios_roles = {
+        "Iñigo": "Administrador (Junta)",
+        "Rosi": "Administrador (Junta)",
+        "Xabi": "Administrador (Junta)",
+        "Resano": "Administrador (Junta)",
+        "Diego": "Administrador (Junta)",
+        "Marta": "Miembro",
+        "Jon": "Miembro",
+        "Ana": "Miembro"
+    }
+
+CATEGORIAS_SAFARA = [
+    "Material y Recambios",
+    "Gasolina",
+    "Kilometraje",
+    "Peajes",
+    "Parking",
+    "Transporte / Furgoneta",
+    "Dietas y Comidas",
+    "Bebidas",
+    "Alquiler de Local",
+    "Otros gastos"
+]
+
+# Cabecera visual en la barra lateral con los colores de Safara
+st.sidebar.markdown("""
+    <div style="background-color: #000000; padding: 15px; border-radius: 10px; text-align: center; border: 2px solid #FFEB3B;">
+        <h2 style="color: #FFEB3B; margin: 0; font-family: sans-serif;">SAFARA</h2>
+        <p style="color: #FFFFFF; font-size: 12px; margin: 0;">PERCUSSION • PAMPLONA</p>
+    </div>
+""", unsafe_allow_html=True)
+
+st.sidebar.markdown("---")
+usuario_activo = st.sidebar.selectbox("Selecciona tu usuario:", list(st.session_state.usuarios_roles.keys()))
+rol_activo = st.session_state.usuarios_roles[usuario_activo]
+st.sidebar.info(f"👤 Rol: **{rol_activo}**")
+
+st.sidebar

@@ -964,8 +964,8 @@ with tab_movidas:
         st.metric("2026", "14 bolos")
 
     st.caption(
-        "CRECIMIENTO: ¡Más de 40 actuaciones acumuladas! ¡Esto esta de locos!"
-        " retumbar la calle."
+        "CRECIMIENTO: ¡Más de 40 actuaciones acumuladas!"
+        "  ¡Esto esta de locos!"
     )
 
     st.markdown("---")

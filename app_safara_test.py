@@ -76,7 +76,7 @@ bg_b64 = cargar_imagen_b64("IMG_0753.jpeg")
 logo_fuego_file = buscar_logo_fuego()
 logo_b64 = cargar_imagen_b64(logo_fuego_file) if logo_fuego_file else None
 
-bg_css_login = f"background: linear-gradient(rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.88)), url('data:image/jpeg;base64,{bg_b64}'); background-size: cover; background-position: center; background-attachment: fixed;" if bg_b64 else "background-color: #050505;"
+bg_css_login = f"background: linear-gradient(rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.88)), url('data:image/jpeg;base64,{bg_b64}'); background-size: cover; background-position: center; background-attachment: fixed;" if bg_b64 else "background-color: #050505;"
 
 st.markdown(
     f"""
@@ -97,19 +97,19 @@ st.markdown(
         display: none !important;
     }}
 
-    /* INSIGNIA CENTRAL TRANSPARENTE SPARTA-STYLE */
+    /* INSIGNIA CENTRAL TRANSPARENTE CON MAYOR PRESENCIA */
     .sparta-logo-container {{
         text-align: center;
-        margin-top: 1.2rem;
-        margin-bottom: 1.2rem;
+        margin-top: 1rem;
+        margin-bottom: 1rem;
     }}
     
     .sparta-circle-logo {{
-        width: 175px;
-        height: 175px;
+        width: 210px;
+        height: 210px;
         border-radius: 50%;
-        border: 2px solid rgba(231, 76, 60, 0.85);
-        box-shadow: 0 0 30px rgba(231, 76, 60, 0.5);
+        border: 2.5px solid rgba(231, 76, 60, 0.9);
+        box-shadow: 0 0 35px rgba(231, 76, 60, 0.65);
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -122,7 +122,7 @@ st.markdown(
         max-width: 100%;
         max-height: 100%;
         object-fit: contain;
-        filter: drop-shadow(0px 0px 10px rgba(231, 76, 60, 0.8));
+        filter: drop-shadow(0px 0px 12px rgba(231, 76, 60, 0.85));
     }}
 
     .frase-chapa-badge {{
@@ -131,12 +131,12 @@ st.markdown(
         color: #E74C3C;
         font-weight: 700;
         font-style: italic;
-        margin-bottom: 25px;
+        margin-bottom: 20px;
         letter-spacing: 1px;
         text-transform: uppercase;
     }}
 
-    /* TARJETAS CRISTAL TRASLÚCIDO CON BORDE ROJO SAFARA */
+    /* TARJETAS CRISTAL TRASLÚCIDO */
     .glass-card {{
         background: rgba(12, 12, 12, 0.82);
         backdrop-filter: blur(12px);
@@ -146,26 +146,38 @@ st.markdown(
         box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.7);
     }}
 
-    /* BOTONES UNIFICADOS EN ROJO SAFARA */
+    /* BOTÓN DE ACCESO HIGH-END ELEGANTE */
     .stButton>button, div[data-testid="stFormSubmitButton"]>button {{
-        background: linear-gradient(135deg, #C0392B 0%, #900C3F 100%) !important;
+        background: linear-gradient(135deg, #A91B0D 0%, #7B0000 100%) !important;
         color: #FFFFFF !important;
         font-weight: 800 !important;
-        letter-spacing: 1.5px !important;
+        letter-spacing: 2px !important;
         text-transform: uppercase !important;
-        border-radius: 10px !important;
-        border: none !important;
+        border-radius: 12px !important;
+        border: 1px solid rgba(231, 76, 60, 0.6) !important;
         width: 100% !important;
-        padding: 12px 18px !important;
-        box-shadow: 0 4px 18px rgba(192, 57, 43, 0.4) !important;
-        transition: all 0.2s ease-in-out !important;
+        padding: 14px 20px !important;
+        box-shadow: 0 4px 20px rgba(169, 27, 13, 0.5) !important;
+        transition: all 0.3s ease !important;
     }}
     .stButton>button:hover {{
-        box-shadow: 0 6px 22px rgba(231, 76, 60, 0.6) !important;
-        transform: translateY(-1px);
+        background: linear-gradient(135deg, #C0392B 0%, #900C3F 100%) !important;
+        box-shadow: 0 6px 28px rgba(231, 76, 60, 0.8) !important;
+        border-color: #E74C3C !important;
     }}
 
-    /* CAMPOS DE TEXTO E INPUTS SOBRIOS */
+    /* ELIMINACIÓN DE LA PALABRA 'VISIBILI...' Y SU BOTÓN FLOTANTE */
+    div[data-baseweb="input"] button, 
+    div[data-baseweb="input"] span[title*="Show"],
+    div[data-baseweb="input"] span[title*="Hide"],
+    div[data-baseweb="input"] div[role="button"] {{
+        display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+    }}
+
+    /* ESTILIZACIÓN DE CAMPOS DE ENTRADA */
     input, textarea {{
         background-color: #121212 !important;
         color: #FFFFFF !important;
@@ -175,14 +187,6 @@ st.markdown(
         font-weight: 600 !important;
     }}
 
-    /* OCULTAR EL RESIDUO DE TEXTO / BOTÓN DE VISIBILIDAD EN INPUT PASSWORD */
-    div[data-baseweb="input"] button, 
-    div[data-baseweb="input"] span[title*="Show"],
-    div[data-baseweb="input"] span[title*="Hide"] {{
-        display: none !important;
-        visibility: hidden !important;
-    }}
-
     div[data-baseweb="select"] > div {{
         background-color: #121212 !important;
         color: #FFFFFF !important;
@@ -190,6 +194,7 @@ st.markdown(
         border: 1px solid #333333 !important;
     }}
 
+    /* PESTAÑAS Y TEXTOS */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 10px;
     }}
@@ -205,31 +210,16 @@ st.markdown(
         border-bottom-color: #E74C3C !important;
     }}
 
-    /* MARQUESINA EN ROJO SAFARA */
-    .ticker-container {{
-        width: 100%;
-        background: linear-gradient(90deg, #900C3F 0%, #C0392B 50%, #E74C3C 100%);
-        color: #FFFFFF;
-        overflow: hidden;
-        white-space: nowrap;
-        box-sizing: border-box;
-        border-radius: 10px;
-        padding: 8px 0;
-        margin-bottom: 15px;
-        box-shadow: 0 4px 15px rgba(192, 57, 43, 0.4);
+    /* EXPANDER LIMPIO SIN TEXTOS ROTOS */
+    .stExpander {{
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
     }}
-    .ticker-text {{
-        display: inline-block;
-        padding-left: 100%;
-        animation: ticker 18s linear infinite;
-        font-weight: 800;
-        font-size: 13px;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-    }}
-    @keyframes ticker {{
-        0% {{ transform: translate(0, 0); }}
-        100% {{ transform: translate(-100%, 0); }}
+    .stExpander summary span {{
+        color: #E74C3C !important;
+        font-weight: 700 !important;
+        font-size: 0.85rem !important;
     }}
     </style>
     """,
@@ -317,15 +307,15 @@ if "usuarios_registrados" not in st.session_state:
 if "usuario_autenticado" not in st.session_state:
     st.session_state.usuario_autenticado = None
 
-if "recientemente_registrado" not in st.session_state:
-    st.session_state.recientemente_registrado = None
+if "mostrar_recuperacion" not in st.session_state:
+    st.session_state.mostrar_recuperacion = False
 
 # ==============================================================================
 # --- PANTALLA DE ACCESO Y REGISTRO (SPARTA & DEEP RED ACCENT) ------------------
 # ==============================================================================
 if not st.session_state.usuario_autenticado:
 
-    # Logo con contenedor totalmente transparente
+    # Logo con contenedor totalmente transparente y más presencia (210px)
     if logo_b64:
         st.markdown(
             f"""
@@ -349,7 +339,7 @@ if not st.session_state.usuario_autenticado:
             unsafe_allow_html=True,
         )
 
-    # Frase aleatoria del grupo justo debajo del logo principal
+    # Frase aleatoria del grupo
     frase_actual = random.choice(FRASES_SAFARA)
     st.markdown(f'<div class="frase-chapa-badge">"{frase_actual}"</div>', unsafe_allow_html=True)
 
@@ -359,7 +349,7 @@ if not st.session_state.usuario_autenticado:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         
         nombres_disponibles = ["Selecciona tu usuario..."] + list(st.session_state.usuarios_registrados.keys())
-        nombre_login = st.selectbox("Safarer", nombres_disponibles)
+        nombre_login = st.selectbox("Safarer", nombres_disponibles, label_visibility="visible")
         pin_login = st.text_input("PIN de Acceso", type="password", placeholder="Introduce tu PIN")
 
         if st.button("ENTRAR EN SAFARA"):
@@ -378,32 +368,42 @@ if not st.session_state.usuario_autenticado:
                 else:
                     st.error("PIN incorrecto. Revisa e inténtalo de nuevo.")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Recuperación integrada vía WhatsApp
-        with st.expander("¡Vaya memoria Safarer! ¿Has olvidado la contraseña?"):
-            st.caption("Introduce tu teléfono de contacto para enviarte el recordatorio de PIN:")
+        st.markdown("<div style='height: 15px;'></div>", unsafe_allow_html=True)
+
+        # Enlace limpio y elegante para recuperar contraseña
+        if not st.session_state.mostrar_recuperacion:
+            if st.button("¿Vaya memoria Safarer! ¿Has olvidado la contraseña?"):
+                st.session_state.mostrar_recuperacion = True
+                st.rerun()
+        else:
+            st.markdown("<p style='color:#E74C3C; font-weight:bold; font-size:0.9rem; margin-top:10px;'>Recuperación de PIN vía WhatsApp:</p>", unsafe_allow_html=True)
             tel_recup = st.text_input("Teléfono Móvil Registrado", placeholder="600000000")
-            if st.button("ENVIAR RECORDATORIO POR WHATSAPP"):
-                if nombre_login == "Selecciona tu usuario...":
-                    st.warning("Selecciona primero tu usuario en el desplegable superior.")
-                elif not tel_recup:
-                    st.warning("Escribe tu número de teléfono.")
-                else:
-                    user_info = st.session_state.usuarios_registrados.get(nombre_login, {})
-                    pin_rec = user_info.get("pin", "1234")
-                    msg_wa = f"Hola {nombre_login}, tu PIN de acceso para Safara Percussion es: {pin_rec}."
-                    url_wa = f"https://wa.me/34{tel_recup.strip()}?text={urllib.parse.quote(msg_wa)}"
-                    st.markdown(
-                        f"""
-                        <div style="margin-top: 10px; text-align: center;">
-                            <a href="{url_wa}" target="_blank" style="background: #25D366; color: #FFFFFF; padding: 10px 16px; border-radius: 10px; font-weight: 800; text-decoration: none; display: inline-block;">
-                                Abrir WhatsApp y Recibir PIN
-                            </a>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+            col_rec1, col_rec2 = st.columns(2)
+            with col_rec1:
+                if st.button("ENVIAR RECORDATORIO"):
+                    if nombre_login == "Selecciona tu usuario...":
+                        st.warning("Selecciona primero tu usuario.")
+                    elif not tel_recup:
+                        st.warning("Escribe tu número de teléfono.")
+                    else:
+                        user_info = st.session_state.usuarios_registrados.get(nombre_login, {})
+                        pin_rec = user_info.get("pin", "1234")
+                        msg_wa = f"Hola {nombre_login}, tu PIN de acceso para Safara Percussion es: {pin_rec}."
+                        url_wa = f"https://wa.me/34{tel_recup.strip()}?text={urllib.parse.quote(msg_wa)}"
+                        st.markdown(
+                            f"""
+                            <div style="margin-top: 10px; text-align: center;">
+                                <a href="{url_wa}" target="_blank" style="background: #25D366; color: #FFFFFF; padding: 10px 16px; border-radius: 10px; font-weight: 800; text-decoration: none; display: inline-block;">
+                                    Abrir WhatsApp
+                                </a>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+            with col_rec2:
+                if st.button("CANCELAR"):
+                    st.session_state.mostrar_recuperacion = False
+                    st.rerun()
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -433,7 +433,7 @@ if not st.session_state.usuario_autenticado:
                         "instrumento": reg_instrumento,
                         "rgpd": True
                     }
-                    st.success(f"¡Alta tramitada! Tu PIN es: *{pin_gen}*")
+                    st.success(f"¡Alta tramitada! Tu PIN es: **{pin_gen}**")
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.stop()
@@ -457,6 +457,7 @@ st.markdown(
 
 if st.button("Salir"):
     st.session_state.usuario_autenticado = None
+    st.session_state.mostrar_recuperacion = False
     st.rerun()
 
 tab_movidas, tab_eventos, tab_gastos_app, tab_admin_app = st.tabs(

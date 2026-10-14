@@ -1,4 +1,74 @@
-import base64
+[16:54, 14/10/2026] RKS DIEGO PERSONAL: import base64
+import datetime
+import io
+import os
+import random
+import re
+import urllib.parse
+import zipfile
+
+try:
+  from zoneinfo import ZoneInfo
+except ImportError:
+  from backports.zoneinfo import ZoneInfo
+
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(
+    page_title="Safara Percussion - App Oficial",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+# --- FRASES DE CHAPAS SAFARA PARA LA CABECERA ---
+FRASES_SAFARA = [
+    "Safara • Yo toco pero bailo",
+    "Safara • Chupinazo y luego terapia",
+    "Safara • La última y pa casa",
+    "Safara • Tocamos y luego hablamos",
+    "Safara • Pues güeno depende... si no Gomito",
+    "Safara • Me vine arriba y aquí estoy",
+    "Safara • On Fire",
+]
+
+# --- FRASES FELICITACIÓN CUMPLEAÑ…
+[16:58, 14/10/2026] RKS DIEGO PERSONAL: import base64
+import datetime
+import io
+import os
+import random
+import re
+import urllib.parse
+import zipfile
+
+try:
+  from zoneinfo import ZoneInfo
+except ImportError:
+  from backports.zoneinfo import ZoneInfo
+
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(
+    page_title="Safara Percussion - App Oficial",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+# --- FRASES DE CHAPAS SAFARA PARA LA CABECERA ---
+FRASES_SAFARA = [
+    "Safara • Yo toco pero bailo",
+    "Safara • Chupinazo y luego terapia",
+    "Safara • La última y pa casa",
+    "Safara • Tocamos y luego hablamos",
+    "Safara • Pues güeno depende... si no Gomito",
+    "Safara • Me vine arriba y aquí estoy",
+    "Safara • On Fire",
+]
+
+# --- FRASES FELICITACIÓN CUMPLEAÑ…
+[16:59, 14/10/2026] RKS DIEGO PERSONAL: import base64
 import datetime
 import io
 import os
@@ -874,7 +944,7 @@ if not st.session_state.usuario_autenticado:
       reg_email = st.text_input("Correo Electrónico *")
       reg_tel = st.text_input("Teléfono Móvil (para recibir PIN) *")
 
-      st.markdown("**Fecha de Nacimiento (Día / Mes / Año):**")
+      st.markdown("*Fecha de Nacimiento (Día / Mes / Año):*")
       col_d, col_m, col_a = st.columns(3)
       with col_d:
         reg_dia = st.number_input("Día", 1, 31, 15)
@@ -929,7 +999,7 @@ if not st.session_state.usuario_autenticado:
           guardar_usuarios_excel()
 
           st.success(
-              f"¡Alta tramitada! Tu PIN personal es: **{pin_generado}**"
+              f"¡Alta tramitada! Tu PIN personal es: *{pin_generado}*"
           )
 
           texto_w_pin = f"Hola {reg_nombre}, tu PIN de acceso para la app de Safara Percussion es: {pin_generado}."
@@ -1542,7 +1612,7 @@ with tab_gastos_app:
         )
 
         nombre_fichero = (
-            f"Gasto_{id_nuevo}_{fecha}_{usuario_actual}_{importe}EUR.{ext}"
+            f"Gasto_{id_nuevo}{fecha}{usuario_actual}_{importe}EUR.{ext}"
         )
         path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
 
@@ -1588,7 +1658,7 @@ with tab_gastos_app:
             """,
           unsafe_allow_html=True,
       )
-      if st.button("✔ Confirmar Aviso Enviado"):
+      if st.button("✔️ Confirmar Aviso Enviado"):
         st.session_state.ultimo_whatsapp_url = None
         st.rerun()
 
@@ -1647,9 +1717,9 @@ with tab_gastos_app:
                 if ext in ["png", "jpg", "jpeg"]:
                   st.image(path_fich, use_container_width=True)
                 elif ext == "pdf":
-                  st.write(f"📄 Archivo PDF adjunto: `{fich}`")
+                  st.write(f"📄 Archivo PDF adjunto: {fich}")
                 else:
-                  st.write(f"📁 Archivo adjunto: `{fich}`")
+                  st.write(f"📁 Archivo adjunto: {fich}")
       else:
         st.info("No hay gastos registrados todavía.")
     except Exception as e:
@@ -1782,7 +1852,7 @@ with tab_admin_app:
         col_ab1, col_ab2 = st.columns([3, 1])
         with col_ab1:
           st.write(
-              f"**#{prow['ID']} - {prow['Usuario']}**:"
+              f"*#{prow['ID']} - {prow['Usuario']}*:"
               f" {formato_espanol(prow['Importe'])} € ({prow['Concepto']})"
           )
         with col_ab2:
@@ -1824,7 +1894,7 @@ with tab_admin_app:
                   ]
                   ext = fich.split(".")[-1]
                   zip_name = (
-                      f"Justificantes/ID_{row['ID']}_{row['Fecha']}_{clean_concept}_{row['Importe']}EUR.{ext}"
+                      f"Justificantes/ID_{row['ID']}{row['Fecha']}{clean_concept}_{row['Importe']}EUR.{ext}"
                   )
                   zip_file.write(path_fich, zip_name)
 

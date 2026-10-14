@@ -554,25 +554,30 @@ if "actuaciones" not in st.session_state:
     except:
       st.session_state.actuaciones = []
   else:
-    st.session_state.actuaciones = [
-        {
-            "id": 1,
-            "titulo": "Halloween Ocasiones Especiales",
-            "fecha": datetime.date(2026, 10, 31),
-            "hora": "19:00h",
-            "lugar": "Pamplona",
-            "estado": "CONFIRMADA",
-        },
-        {
-            "id": 2,
-            "titulo": "Boda Amaia (Iruña Park)",
-            "fecha": datetime.date(2026, 11, 7),
-            "hora": "19:00h - 20:00h",
-            "lugar": "Iruña Park, Pamplona",
-            "estado": "CONFIRMADA",
-        },
-    ]
-    guardar_actuaciones_excel()
+    # Carga automática desde tu Google Sheet de Actuaciones
+        try:
+            ACTUATIONS_GSHEET_URL = "https://docs.google.com/spreadsheets/d/16uviY0tWNPcMKgtnPHA5N5AneW8nquD5A-6Nst-egRM/export?format=csv&gid=2025182751"
+            df_act = pd.read_csv(ACTUATIONS_GSHEET_URL)
+            list_acts = []
+            for index, row in df_act.iterrows():
+                f_val = row.get("fecha", datetime.date.today())
+                if isinstance(f_val, str):
+                    try:
+                        f_val = datetime.date.fromisoformat(f_val.strip())
+                    except:
+                        f_val = datetime.date.today()
+                
+                list_acts.append({
+                    "id": int(row.get("id", index + 1)),
+                    "titulo": str(row.get("titulo", "Actuación Safara")),
+                    "fecha": f_val,
+                    "hora": str(row.get("hora", "19:00h")),
+                    "lugar": str(row.get("lugar", "Pamplona")),
+                    "estado": str(row.get("estado", "CONFIRMADA"))
+                })
+            st.session_state.actuaciones = list_acts
+        except Exception:
+            st.session_state.actuaciones = []
 
 # --- CONFESIONARIO PERSISTENTE ---
 if "confesionario_mensajes" not in st.session_state:

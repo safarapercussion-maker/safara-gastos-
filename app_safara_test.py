@@ -33,7 +33,7 @@ FRASES_SAFARA = [
 ]
 
 # --- FRASES FELICITACIÓN CUMPLEAÑ…
-[16:58, 14/10/2026] RKS DIEGO PERSONAL: import base64
+import base64
 import datetime
 import io
 import os
@@ -68,7 +68,7 @@ FRASES_SAFARA = [
 ]
 
 # --- FRASES FELICITACIÓN CUMPLEAÑ…
-[16:59, 14/10/2026] RKS DIEGO PERSONAL: import base64
+import base64
 import datetime
 import io
 import os

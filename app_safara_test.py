@@ -554,30 +554,25 @@ if "actuaciones" not in st.session_state:
     except:
       st.session_state.actuaciones = []
   else:
-    # Carga automática desde tu Google Sheet de Actuaciones
-        try:
-            ACTUATIONS_GSHEET_URL = "https://docs.google.com/spreadsheets/d/16uviY0tWNPcMKgtnPHA5N5AneW8nquD5A-6Nst-egRM/export?format=csv&gid=2025182751"
-            df_act = pd.read_csv(ACTUATIONS_GSHEET_URL)
-            list_acts = []
-            for index, row in df_act.iterrows():
-                f_val = row.get("fecha", datetime.date.today())
-                if isinstance(f_val, str):
-                    try:
-                        f_val = datetime.date.fromisoformat(f_val.strip())
-                    except:
-                        f_val = datetime.date.today()
-                
-                list_acts.append({
-                    "id": int(row.get("id", index + 1)),
-                    "titulo": str(row.get("titulo", "Actuación Safara")),
-                    "fecha": f_val,
-                    "hora": str(row.get("hora", "19:00h")),
-                    "lugar": str(row.get("lugar", "Pamplona")),
-                    "estado": str(row.get("estado", "CONFIRMADA"))
-                })
-            st.session_state.actuaciones = list_acts
-        except Exception:
-            st.session_state.actuaciones = []
+    st.session_state.actuaciones = [
+        {
+            "id": 1,
+            "titulo": "Halloween Ocasiones Especiales",
+            "fecha": datetime.date(2026, 10, 31),
+            "hora": "19:00h",
+            "lugar": "Pamplona",
+            "estado": "CONFIRMADA",
+        },
+        {
+            "id": 2,
+            "titulo": "Boda Amaia (Iruña Park)",
+            "fecha": datetime.date(2026, 11, 7),
+            "hora": "19:00h - 20:00h",
+            "lugar": "Iruña Park, Pamplona",
+            "estado": "CONFIRMADA",
+        },
+    ]
+    guardar_actuaciones_excel()
 
 # --- CONFESIONARIO PERSISTENTE ---
 if "confesionario_mensajes" not in st.session_state:
@@ -1381,76 +1376,39 @@ with tab_eventos:
         """,
           unsafe_allow_html=True,
       )
-if ev.get("estado") == "CONFIRMADA":
-          continue
+
       voto_bolo_actual = obtener_voto_usuario(encuesta_key, usuario_actual)
-    # Si el bolo NO está confirmado por Excel, mostramos la encuesta y los contadores
+      cls_b_si = (
+          "poll-img-green-sel"
+          if voto_bolo_actual == "SI"
+          else "poll-img-green-norm"
+      )
+      cls_b_no = (
+          "poll-img-red-sel" if voto_bolo_actual == "NO" else "poll-img-red-norm"
+      )
 
-         voto_bolo_actual = obtener_voto_usuario(encuesta_key, usuario_actual)
-         cls_b_si = (
-             "poll-img-green-sel"
-             if voto_bolo_actual == "SI"
-             else "poll-img-green-norm"
-         )
-         cls_b_no = (
-             "poll-img-red-sel" if voto_bolo_actual == "NO" else "poll-img-red-norm"
-         )
+      url_b_si = f"?user={usuario_actual}&action=v_bolo_si_{bolo_id}&voter={usuario_actual}"
+      url_b_no = f"?user={usuario_actual}&action=v_bolo_no_{bolo_id}&voter={usuario_actual}"
 
-         url_b_si = f"?user={usuario_actual}&action=v_bolo_si_{bolo_id}&voter={usuario_actual}"
-         url_b_no = f"?user={usuario_actual}&action=v_bolo_no_{bolo_id}&voter={usuario_actual}"
-
-         st.markdown(
-             f"""
-                 <div class="safara-poll-row">
-                     <div class="safara-poll-col">
-                         <a href="{url_b_si}" target="_self" style="text-decoration:none;">
-                             <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_si}" />
-                         </a>
-                         <div class="poll-label-green">A tope, se le da</div>
-                     </div>
-                     <div class="safara-poll-col">
-                         <a href="{url_b_no}" target="_self" style="text-decoration:none;">
-                             <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_no}" />
-                         </a>
-                         <div class="poll-label-red">No puedo, tengo lío</div>
-                     </div>
-                 </div>
-             """,
-             unsafe_allow_html=True,
-         )
-
-         st.markdown(
-             f"<p style='text-align: center; font-size: 13px; font-weight: 800;"
-             f" color: #2ECC71; margin-top: 4px;'>🟢 {num_conf} Safarers"
-             " confirmados para este bolo</p>",
-             unsafe_allow_html=True,
-         )
-
-         if confirmados_bolo:
-             counts_b = {
-                 "Repenike": 0,
-                 "Caja": 0,
-                 "Surdo": 0,
-                 "Surdo de contra": 0,
-                 "Ganza (bailarinas)": 0,
-             }
-             for c_user in confirmados_bolo:
-                 u_inst = st.session_state.usuarios_registrados.get(c_user, {}).get(
-                     "instrumento", "Repenike"
-                 )
-                 if u_inst in counts_b:
-                     counts_b[u_inst] += 1
-                 else:
-                     counts_b["Repenike"] += 1
-
-             st.caption(
-                 f"Repenikes: {counts_b['Repenike']} | Cajas: {counts_b['Caja']} |"
-                 f" Surdos: {counts_b['Surdo']} | Surdos de contra:"
-                 f" {counts_b['Surdo de contra']} | Bailarinas:"
-                 f" {counts_b['Ganza (bailarinas)']}"
-             )
-
-     st.markdown("---")
+      st.markdown(
+          f"""
+            <div class="safara-poll-row">
+                <div class="safara-poll-col">
+                    <a href="{url_b_si}" target="_self" style="text-decoration:none;">
+                        <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_si}" />
+                    </a>
+                    <div class="poll-label-green">A tope, se le da</div>
+                </div>
+                <div class="safara-poll-col">
+                    <a href="{url_b_no}" target="_self" style="text-decoration:none;">
+                        <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_no}" />
+                    </a>
+                    <div class="poll-label-red">No puedo, tengo lío</div>
+                </div>
+            </div>
+        """,
+          unsafe_allow_html=True,
+      )
 
       st.markdown(
           f"<p style='text-align: center; font-size: 13px; font-weight: 800;"

@@ -1384,6 +1384,7 @@ with tab_eventos:
 
     # Si el bolo NO está confirmado por Excel, mostramos la encuesta y los contadores
      if ev.get("estado") != "CONFIRMADA":
+          continue
          voto_bolo_actual = obtener_voto_usuario(encuesta_key, usuario_actual)
          cls_b_si = (
              "poll-img-green-sel"

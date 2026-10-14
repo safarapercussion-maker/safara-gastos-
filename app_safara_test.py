@@ -1382,38 +1382,73 @@ with tab_eventos:
           unsafe_allow_html=True,
       )
 
-      voto_bolo_actual = obtener_voto_usuario(encuesta_key, usuario_actual)
-      cls_b_si = (
-          "poll-img-green-sel"
-          if voto_bolo_actual == "SI"
-          else "poll-img-green-norm"
-      )
-      cls_b_no = (
-          "poll-img-red-sel" if voto_bolo_actual == "NO" else "poll-img-red-norm"
-      )
+    # Si el bolo NO está confirmado por Excel, mostramos la encuesta y los contadores
+     if ev.get("estado") != "CONFIRMADA":
+         voto_bolo_actual = obtener_voto_usuario(encuesta_key, usuario_actual)
+         cls_b_si = (
+             "poll-img-green-sel"
+             if voto_bolo_actual == "SI"
+             else "poll-img-green-norm"
+         )
+         cls_b_no = (
+             "poll-img-red-sel" if voto_bolo_actual == "NO" else "poll-img-red-norm"
+         )
 
-      url_b_si = f"?user={usuario_actual}&action=v_bolo_si_{bolo_id}&voter={usuario_actual}"
-      url_b_no = f"?user={usuario_actual}&action=v_bolo_no_{bolo_id}&voter={usuario_actual}"
+         url_b_si = f"?user={usuario_actual}&action=v_bolo_si_{bolo_id}&voter={usuario_actual}"
+         url_b_no = f"?user={usuario_actual}&action=v_bolo_no_{bolo_id}&voter={usuario_actual}"
 
-      st.markdown(
-          f"""
-            <div class="safara-poll-row">
-                <div class="safara-poll-col">
-                    <a href="{url_b_si}" target="_self" style="text-decoration:none;">
-                        <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_si}" />
-                    </a>
-                    <div class="poll-label-green">A tope, se le da</div>
-                </div>
-                <div class="safara-poll-col">
-                    <a href="{url_b_no}" target="_self" style="text-decoration:none;">
-                        <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_no}" />
-                    </a>
-                    <div class="poll-label-red">No puedo, tengo lío</div>
-                </div>
-            </div>
-        """,
-          unsafe_allow_html=True,
-      )
+         st.markdown(
+             f"""
+                 <div class="safara-poll-row">
+                     <div class="safara-poll-col">
+                         <a href="{url_b_si}" target="_self" style="text-decoration:none;">
+                             <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_si}" />
+                         </a>
+                         <div class="poll-label-green">A tope, se le da</div>
+                     </div>
+                     <div class="safara-poll-col">
+                         <a href="{url_b_no}" target="_self" style="text-decoration:none;">
+                             <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_no}" />
+                         </a>
+                         <div class="poll-label-red">No puedo, tengo lío</div>
+                     </div>
+                 </div>
+             """,
+             unsafe_allow_html=True,
+         )
+
+         st.markdown(
+             f"<p style='text-align: center; font-size: 13px; font-weight: 800;"
+             f" color: #2ECC71; margin-top: 4px;'>🟢 {num_conf} Safarers"
+             " confirmados para este bolo</p>",
+             unsafe_allow_html=True,
+         )
+
+         if confirmados_bolo:
+             counts_b = {
+                 "Repenike": 0,
+                 "Caja": 0,
+                 "Surdo": 0,
+                 "Surdo de contra": 0,
+                 "Ganza (bailarinas)": 0,
+             }
+             for c_user in confirmados_bolo:
+                 u_inst = st.session_state.usuarios_registrados.get(c_user, {}).get(
+                     "instrumento", "Repenike"
+                 )
+                 if u_inst in counts_b:
+                     counts_b[u_inst] += 1
+                 else:
+                     counts_b["Repenike"] += 1
+
+             st.caption(
+                 f"Repenikes: {counts_b['Repenike']} | Cajas: {counts_b['Caja']} |"
+                 f" Surdos: {counts_b['Surdo']} | Surdos de contra:"
+                 f" {counts_b['Surdo de contra']} | Bailarinas:"
+                 f" {counts_b['Ganza (bailarinas)']}"
+             )
+
+     st.markdown("---")
 
       st.markdown(
           f"<p style='text-align: center; font-size: 13px; font-weight: 800;"

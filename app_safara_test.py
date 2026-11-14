@@ -21,6 +21,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# The legacy application remains below as a historical reference while the
+# test deployment runs the secure, database-backed implementation.
+from secure_app import run
+
+run()
+st.stop()
+
 # --- FRASES DE CHAPAS SAFARA PARA LA CABECERA ---
 FRASES_SAFARA = [
     "Safara • Yo toco pero bailo",

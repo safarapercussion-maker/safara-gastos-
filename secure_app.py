@@ -266,7 +266,7 @@ def _login_screen(engine):
             st.rerun()
           st.error("Acceso no válido.")
     else:
-      st.info("El administrador inicial se crea desde la configuración segura del entorno.")
+      st.info("La primera alta de este entorno de pruebas será administradora.")
   with right:
     st.subheader("Solicitar alta")
     with st.form("signup"):

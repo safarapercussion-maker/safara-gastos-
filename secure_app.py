@@ -288,15 +288,17 @@ def _login_screen(engine):
             # enables this path.
             first_test_user = db.scalar(select(User.id).limit(1)) is None
             test_admin = first_test_user and bool(_secret("allow_first_test_admin", False))
-            db.add(User(
+            created_user = User(
               name=name.strip(),
               instrument=instrument.strip(),
               pin_hash=_hash_pin(pin),
               role="admin" if test_admin else "member",
-            ))
+            )
+            db.add(created_user)
             db.commit()
-            message = "Acceso de administración creado." if test_admin else "Acceso creado."
-            st.success(f"{message} Ya puedes entrar con tu PIN.")
+            db.refresh(created_user)
+            st.session_state.secure_user_id = created_user.id
+            st.rerun()
 
 
 def _event_tab(engine, user: User):

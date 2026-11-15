@@ -438,6 +438,7 @@ EXCEL_INVITACIONES = "invitaciones_safara_v2.xlsx"
 VOTOS_PERSIST_FILE = "votos_safara_historial.xlsx"
 CONFESIONARIO_FILE = "confesionario_safara.xlsx"
 ACTUACIONES_FILE = "actuaciones_safara.xlsx"
+AUDITORIA_FILE = "auditoria_safara.log"
 
 FECHA_FUNDACION = datetime.date(2023, 4, 23)
 
@@ -453,6 +454,60 @@ else:
   ubicacion_rotativa = "Gaztetxe de Zizur"
 
 ciclo_actual = obtener_ciclo_semanal_actual()
+
+
+def sincronizacion_google_habilitada():
+  """Evita conexiones externas salvo autorización explícita en Secrets."""
+  try:
+    value = st.secrets.get("enable_google_sheets_sync", False)
+  except Exception:
+    return False
+  return value is True or str(value).strip().lower() in {"true", "1", "si", "sí"}
+
+
+def guardar_excel_atomico(dataframe, destino):
+  """Evita dejar un Excel incompleto si la escritura se interrumpe."""
+  temporal = f"{destino}.tmp.xlsx"
+  try:
+    dataframe.to_excel(temporal, index=False)
+    os.replace(temporal, destino)
+    return True
+  except Exception:
+    try:
+      if os.path.exists(temporal):
+        os.remove(temporal)
+    except OSError:
+      pass
+    return False
+
+
+def guardar_texto_atomico(texto, destino):
+  temporal = f"{destino}.tmp"
+  try:
+    with open(temporal, "w", encoding="utf-8") as archivo:
+      archivo.write(str(texto))
+    os.replace(temporal, destino)
+    return True
+  except OSError:
+    try:
+      if os.path.exists(temporal):
+        os.remove(temporal)
+    except OSError:
+      pass
+    return False
+
+
+def registrar_auditoria(evento, usuario="", detalle=""):
+  """Registra solo eventos técnicos; nunca secretos, contraseñas ni códigos."""
+  try:
+    marca_tiempo = datetime.datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
+    linea = " | ".join(
+        [marca_tiempo, str(evento), str(usuario), str(detalle).replace("\n", " ")]
+    )
+    with open(AUDITORIA_FILE, "a", encoding="utf-8") as archivo:
+      archivo.write(linea + "\n")
+  except OSError:
+    pass
 
 # --- INICIALIZACIÓN DE VOTOS ---
 if "votos_historial" not in st.session_state:
@@ -482,16 +537,17 @@ if "votos_historial" not in st.session_state:
 
 
 def guardar_votos_persistentes():
-  try:
-    st.session_state.votos_historial.to_excel(VOTOS_PERSIST_FILE, index=False)
-  except Exception:
-    pass
+  if not guardar_excel_atomico(st.session_state.votos_historial, VOTOS_PERSIST_FILE):
+    st.error("No se han podido guardar los votos. Inténtalo de nuevo.")
+    registrar_auditoria("error_guardado_votos")
+    return False
+  return True
 
 
 # --- FUNCIONES DE SINCRONIZACIÓN Y GESTIÓN CON GOOGLE SHEETS (NUBE) ---
 def sincronizar_bolo_en_sheets(titulo, fecha_obj, hora_str, lugar_str, estado_str):
   try:
-    if "gcp_service_account" in st.secrets:
+    if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets:
       import gspread
       from google.oauth2.service_account import Credentials
 
@@ -534,9 +590,7 @@ def sincronizar_bolo_en_sheets(titulo, fecha_obj, hora_str, lugar_str, estado_st
           pass
 
       return next_col
-    else:
-      st.error("Error: No se encuentran las credenciales 'gcp_service_account' en st.secrets.")
-      return None
+    return None
   except Exception as e:
     st.error(f"Error al sincronizar con Google Sheets: {e}")
     return None
@@ -544,7 +598,7 @@ def sincronizar_bolo_en_sheets(titulo, fecha_obj, hora_str, lugar_str, estado_st
 
 def cambiar_estado_bolo_en_sheets(sheet_col, nuevo_estado):
   try:
-    if "gcp_service_account" in st.secrets and sheet_col:
+    if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets and sheet_col:
       import gspread
       from google.oauth2.service_account import Credentials
 
@@ -567,7 +621,7 @@ def cambiar_estado_bolo_en_sheets(sheet_col, nuevo_estado):
 
 def eliminar_bolo_en_sheets(sheet_col):
   try:
-    if "gcp_service_account" in st.secrets and sheet_col:
+    if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets and sheet_col:
       import gspread
       from google.oauth2.service_account import Credentials
 
@@ -594,7 +648,7 @@ def eliminar_bolo_en_sheets(sheet_col):
 
 def registrar_voto_en_sheets_cloud(encuesta_id, usuario_id, respuesta):
   try:
-    if "gcp_service_account" in st.secrets and str(encuesta_id).startswith(
+    if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets and str(encuesta_id).startswith(
         "bolo_"
     ):
       import gspread
@@ -647,6 +701,7 @@ def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
       "%Y-%m-%d %H:%M:%S"
   )
   df = st.session_state.votos_historial
+  votos_anteriores = df.copy(deep=True)
 
   ciclo_target = (
       "BOLO_PERMANENTE" if str(encuesta_id).startswith("bolo_") else ciclo_actual
@@ -673,8 +728,12 @@ def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
     st.session_state.votos_historial.loc[cond, "respuesta"] = str(respuesta)
     st.session_state.votos_historial.loc[cond, "actualizado_en"] = ahora_str
 
-  guardar_votos_persistentes()
+  if not guardar_votos_persistentes():
+    st.session_state.votos_historial = votos_anteriores
+    return False
   registrar_voto_en_sheets_cloud(encuesta_id, usuario_id, respuesta)
+  registrar_auditoria("voto_actualizado", usuario_id, encuesta_id)
+  return True
 
 
 def obtener_voto_usuario(encuesta_id, usuario_id):
@@ -717,15 +776,19 @@ def guardar_actuaciones_excel():
       df_act["fecha"] = df_act["fecha"].apply(
           lambda x: x.isoformat() if isinstance(x, datetime.date) else str(x)
       )
-    df_act.to_excel(ACTUACIONES_FILE, index=False)
+    if not guardar_excel_atomico(df_act, ACTUACIONES_FILE):
+      st.error("No se han podido guardar las actuaciones.")
+      return False
+    return True
   except Exception:
-    pass
+    st.error("No se han podido preparar las actuaciones para guardarlas.")
+    return False
 
 
 def cargar_actuaciones_desde_fuentes():
   acts = []
   try:
-    if "gcp_service_account" in st.secrets:
+    if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets:
       import gspread
       from google.oauth2.service_account import Credentials
 
@@ -842,9 +905,13 @@ if "confesionario_mensajes" not in st.session_state:
 def guardar_confesionario_excel():
   try:
     df_conf = pd.DataFrame(st.session_state.confesionario_mensajes)
-    df_conf.to_excel(CONFESIONARIO_FILE, index=False)
+    if not guardar_excel_atomico(df_conf, CONFESIONARIO_FILE):
+      st.error("No se ha podido guardar el mensaje.")
+      return False
+    return True
   except Exception:
-    pass
+    st.error("No se ha podido preparar el mensaje para guardarlo.")
+    return False
 
 
 if "proximo_ensayo" not in st.session_state:
@@ -1159,6 +1226,7 @@ if not st.session_state.usuario_autenticado:
           st.session_state.ultimo_acceso = datetime.datetime.now()
           st.session_state.fallos_acceso = 0
           st.session_state.bloqueado_hasta = None
+          registrar_auditoria("inicio_sesion", nombre_login)
           st.success(f"¡Bienvenido de nuevo, {nombre_login}!")
           st.rerun()
         else:
@@ -1320,6 +1388,7 @@ if not st.session_state.usuario_autenticado:
             guardar_usuarios_excel()
             st.error("No se ha podido confirmar el código. Inténtalo de nuevo.")
           else:
+            registrar_auditoria("alta_usuario", nombre_limpio, nuevo_usuario["rol"])
             st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1521,12 +1590,12 @@ with tab_movidas:
   voto_ens_si, voto_ens_no = st.columns(2)
   with voto_ens_si:
     if st.button("A tope, se le da", key="btn_ens_si"):
-      registrar_voto_backend("ensayo_proximo", usuario_actual, "SI")
-      st.rerun()
+      if registrar_voto_backend("ensayo_proximo", usuario_actual, "SI"):
+        st.rerun()
   with voto_ens_no:
     if st.button("No puedo, tengo lío", key="btn_ens_no"):
-      registrar_voto_backend("ensayo_proximo", usuario_actual, "NO")
-      st.rerun()
+      if registrar_voto_backend("ensayo_proximo", usuario_actual, "NO"):
+        st.rerun()
 
   st.markdown(
       f"<p style='text-align: center; font-size: 14px; font-weight: 800;"
@@ -1600,12 +1669,12 @@ with tab_movidas:
   voto_cena_si, voto_cena_no = st.columns(2)
   with voto_cena_si:
     if st.button("A tope, se le da", key="btn_cena_si"):
-      registrar_voto_backend("cena_proxima", usuario_actual, "SI")
-      st.rerun()
+      if registrar_voto_backend("cena_proxima", usuario_actual, "SI"):
+        st.rerun()
   with voto_cena_no:
     if st.button("No puedo, tengo lío", key="btn_cena_no"):
-      registrar_voto_backend("cena_proxima", usuario_actual, "NO")
-      st.rerun()
+      if registrar_voto_backend("cena_proxima", usuario_actual, "NO"):
+        st.rerun()
 
   df_votos_cena = obtener_todos_votos_encuesta("cena_proxima")
   num_cenan = (
@@ -1696,8 +1765,11 @@ with tab_movidas:
             "mensaje": confesion_txt.strip(),
         }
         st.session_state.confesionario_mensajes.append(nuevo_msg)
-        guardar_confesionario_excel()
-        st.success("¡Mensaje guardado con éxito en el confesionario!")
+        if guardar_confesionario_excel():
+          registrar_auditoria("mensaje_confesionario", usuario_actual)
+          st.success("¡Mensaje guardado con éxito en el confesionario!")
+        else:
+          st.session_state.confesionario_mensajes.pop()
       else:
         st.error("Por favor, escribe un mensaje antes de enviar.")
 
@@ -1823,8 +1895,8 @@ with tab_eventos:
               unsafe_allow_html=True,
           )
           if st.button("A tope, se le da", key=f"btn_v_si_{bolo_id}"):
-            registrar_voto_backend(encuesta_key, usuario_actual, "SI")
-            st.rerun()
+            if registrar_voto_backend(encuesta_key, usuario_actual, "SI"):
+              st.rerun()
 
         with b_col_no:
           st.markdown(
@@ -1836,8 +1908,8 @@ with tab_eventos:
               unsafe_allow_html=True,
           )
           if st.button("No puedo, tengo lío", key=f"btn_v_no_{bolo_id}"):
-            registrar_voto_backend(encuesta_key, usuario_actual, "NO")
-            st.rerun()
+            if registrar_voto_backend(encuesta_key, usuario_actual, "NO"):
+              st.rerun()
 
       if not es_anulada:
         st.markdown(
@@ -2009,13 +2081,19 @@ with tab_gastos_app:
               [st.session_state.gastos, pd.DataFrame([nuevo_reg])],
               ignore_index=True,
           )
-          st.session_state.gastos.to_excel(EXCEL_FILE, index=False)
-
-          st.success("¡Gasto registrado con éxito!")
-
-          st.info(
-              "El gasto queda pendiente de revisión en el panel de administración."
-          )
+          if guardar_excel_atomico(st.session_state.gastos, EXCEL_FILE):
+            st.success("¡Gasto registrado con éxito!")
+            registrar_auditoria("gasto_registrado", usuario_actual, str(id_nuevo))
+            st.info(
+                "El gasto queda pendiente de revisión en el panel de administración."
+            )
+          else:
+            st.session_state.gastos = st.session_state.gastos.iloc[:-1]
+            try:
+              os.remove(path_destino)
+            except OSError:
+              pass
+            st.error("No se ha podido guardar el gasto. Inténtalo de nuevo.")
 
   with tab_sub_hist:
     st.markdown(
@@ -2100,6 +2178,7 @@ with tab_admin_app:
         codigo_nuevo = crear_invitacion(usuario_actual, dias_invitacion)
         if codigo_nuevo:
           st.session_state.ultimo_codigo_invitacion = codigo_nuevo
+          registrar_auditoria("invitacion_creada", usuario_actual, f"{dias_invitacion}d")
         else:
           st.error("No se ha podido guardar el código de alta.")
 
@@ -2138,13 +2217,18 @@ with tab_admin_app:
           if duplicado:
             st.warning("Ya existe una actuación registrada con este mismo título y fecha.")
           else:
-            sheet_col_asignado = sincronizar_bolo_en_sheets(
-                b_tit, b_fec, b_hor, b_lug, b_est
+            sincronizacion_activa = sincronizacion_google_habilitada()
+            sheet_col_asignado = (
+                sincronizar_bolo_en_sheets(b_tit, b_fec, b_hor, b_lug, b_est)
+                if sincronizacion_activa
+                else None
             )
+            nuevo_id_act = (
+                max([a["id"] for a in st.session_state.actuaciones], default=0) + 1
+            )
+            if not sincronizacion_activa:
+              sheet_col_asignado = nuevo_id_act + 2
             if sheet_col_asignado is not None:
-              nuevo_id_act = (
-                  max([a["id"] for a in st.session_state.actuaciones], default=0) + 1
-              )
               st.session_state.actuaciones.append({
                   "id": nuevo_id_act,
                   "titulo": b_tit,
@@ -2154,9 +2238,17 @@ with tab_admin_app:
                   "estado": b_est,
                   "sheet_col": sheet_col_asignado,
               })
-              guardar_actuaciones_excel()
-              st.success("🎉 ¡Bolo procesado y creado con éxito (sincronizado en Google Sheets)!")
-              st.rerun()
+              if guardar_actuaciones_excel():
+                mensaje = (
+                    "🎉 ¡Bolo procesado y creado con éxito (sincronizado en Google Sheets)!"
+                    if sincronizacion_activa
+                    else "🎉 ¡Bolo creado y guardado localmente!"
+                )
+                st.success(mensaje)
+                registrar_auditoria("actuacion_creada", usuario_actual, b_tit)
+                st.rerun()
+              else:
+                st.error("No se ha podido guardar la actuación.")
             else:
               st.error("No se pudo sincronizar con Google Sheets. Comprueba la conexión y credenciales.")
 
@@ -2225,14 +2317,15 @@ with tab_admin_app:
       )
       btn_actualizar_saldo = st.form_submit_button("ACTUALIZAR SALDO")
       if btn_actualizar_saldo:
+        saldo_anterior = st.session_state.saldo_caja
         st.session_state.saldo_caja = float(nuevo_saldo_input)
-        try:
-          with open(SALDO_FILE, "w") as f:
-            f.write(str(st.session_state.saldo_caja))
-        except:
-          pass
-        st.success("¡Importe actualizado con éxito!")
-        st.rerun()
+        if guardar_texto_atomico(st.session_state.saldo_caja, SALDO_FILE):
+          registrar_auditoria("saldo_actualizado", usuario_actual)
+          st.success("¡Importe actualizado con éxito!")
+          st.rerun()
+        else:
+          st.session_state.saldo_caja = saldo_anterior
+          st.error("No se ha podido guardar el saldo.")
 
     st.markdown("---")
 
@@ -2329,12 +2422,21 @@ with tab_admin_app:
           )
         with col_ab2:
           if st.button("Marcar ABONADO", key=f"abonar_{prow['ID']}"):
+            estado_anterior = st.session_state.gastos.loc[
+                st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
+            ].copy()
             st.session_state.gastos.loc[
                 st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
             ] = "ABONADO"
-            st.session_state.gastos.to_excel(EXCEL_FILE, index=False)
-            st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
-            st.rerun()
+            if guardar_excel_atomico(st.session_state.gastos, EXCEL_FILE):
+              registrar_auditoria("gasto_abonado", usuario_actual, str(prow["ID"]))
+              st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
+              st.rerun()
+            else:
+              st.session_state.gastos.loc[
+                  st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
+              ] = estado_anterior
+              st.error("No se ha podido actualizar el reembolso.")
 
     st.divider()
 

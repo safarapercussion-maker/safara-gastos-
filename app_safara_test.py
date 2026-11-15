@@ -1,5 +1,6 @@
 import base64
 import datetime
+import html
 import io
 import os
 import random
@@ -15,6 +16,8 @@ import pandas as pd
 import streamlit as st
 
 from safara_security import (
+    generate_invitation_code,
+    hash_invitation_code,
     hash_password,
     normalize_display_name,
     normalized_name_key,
@@ -22,7 +25,9 @@ from safara_security import (
     validate_email,
     validate_password,
     validate_phone,
+    validate_receipt_upload,
     verify_bootstrap_token,
+    verify_invitation_code,
     verify_password,
 )
 
@@ -104,6 +109,11 @@ def formato_espanol(valor):
     return s.replace(",", "X").replace(".", ",").replace("X", ".")
   except:
     return "0,00"
+
+
+def escapar_html(valor):
+  """Evita que texto introducido por usuarios se interprete como HTML."""
+  return html.escape(str(valor or ""), quote=True)
 
 
 def render_logo_png(filename, width=210):
@@ -424,6 +434,7 @@ SALDO_FILE = "saldo_caja.txt"
 # Fichero nuevo y deliberadamente separado del registro heredado de credenciales.
 # No se migra ni se carga el fichero anterior: las pruebas empiezan sin cuentas.
 EXCEL_USUARIOS = "usuarios_safara_v2.xlsx"
+EXCEL_INVITACIONES = "invitaciones_safara_v2.xlsx"
 VOTOS_PERSIST_FILE = "votos_safara_historial.xlsx"
 CONFESIONARIO_FILE = "confesionario_safara.xlsx"
 ACTUACIONES_FILE = "actuaciones_safara.xlsx"
@@ -964,6 +975,95 @@ def guardar_usuarios_excel():
     return False
 
 
+INVITATION_COLUMNS = [
+    "codigo_hash",
+    "emitido_por",
+    "creado_en",
+    "caduca_en",
+    "usado_por",
+    "usado_en",
+]
+
+
+def cargar_invitaciones_seguras():
+  if not os.path.exists(EXCEL_INVITACIONES):
+    return []
+  try:
+    df = pd.read_excel(EXCEL_INVITACIONES)
+    if not set(INVITATION_COLUMNS).issubset(df.columns):
+      return []
+    invitaciones = []
+    for record in df[INVITATION_COLUMNS].to_dict(orient="records"):
+      def valor_celda(key):
+        value = record.get(key)
+        return "" if pd.isna(value) else str(value)
+
+      code_hash = valor_celda("codigo_hash")
+      if re.fullmatch(r"[0-9a-f]{64}", code_hash):
+        invitaciones.append({key: valor_celda(key) for key in INVITATION_COLUMNS})
+    return invitaciones
+  except Exception:
+    return []
+
+
+def guardar_invitaciones_excel():
+  try:
+    df = pd.DataFrame(st.session_state.invitaciones, columns=INVITATION_COLUMNS)
+    temporal = f"{EXCEL_INVITACIONES}.tmp.xlsx"
+    df.to_excel(temporal, index=False)
+    os.replace(temporal, EXCEL_INVITACIONES)
+    return True
+  except Exception:
+    return False
+
+
+def crear_invitacion(usuario_admin, dias_validez):
+  codigo = generate_invitation_code()
+  ahora = datetime.datetime.now(datetime.timezone.utc)
+  registro = {
+      "codigo_hash": hash_invitation_code(codigo),
+      "emitido_por": str(usuario_admin),
+      "creado_en": ahora.isoformat(),
+      "caduca_en": (ahora + datetime.timedelta(days=dias_validez)).isoformat(),
+      "usado_por": "",
+      "usado_en": "",
+  }
+  st.session_state.invitaciones.append(registro)
+  if guardar_invitaciones_excel():
+    return codigo
+  st.session_state.invitaciones.pop()
+  return None
+
+
+def invitacion_valida(codigo):
+  ahora = datetime.datetime.now(datetime.timezone.utc)
+  for registro in st.session_state.invitaciones:
+    if registro.get("usado_por"):
+      continue
+    try:
+      caduca_en = datetime.datetime.fromisoformat(registro["caduca_en"])
+    except (TypeError, ValueError):
+      continue
+    if caduca_en < ahora:
+      continue
+    if verify_invitation_code(codigo, registro.get("codigo_hash")):
+      return registro
+  return None
+
+
+def consumir_invitacion(codigo, usuario):
+  registro = invitacion_valida(codigo)
+  if not registro:
+    return False
+  registro["usado_por"] = str(usuario)
+  registro["usado_en"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+  if guardar_invitaciones_excel():
+    return True
+  registro["usado_por"] = ""
+  registro["usado_en"] = ""
+  return False
+
+
 def obtener_token_bootstrap():
   try:
     return str(st.secrets.get("bootstrap_admin_token", ""))
@@ -981,6 +1081,9 @@ def es_administrador(nombre):
 
 if "usuarios_registrados" not in st.session_state:
   st.session_state.usuarios_registrados = cargar_usuarios_seguro()
+
+if "invitaciones" not in st.session_state:
+  st.session_state.invitaciones = cargar_invitaciones_seguras()
 
 if "usuario_autenticado" not in st.session_state:
   st.session_state.usuario_autenticado = None
@@ -1108,6 +1211,7 @@ if not st.session_state.usuario_autenticado:
       )
 
       token_bootstrap = ""
+      codigo_invitacion = ""
       if primer_usuario:
         st.info(
             "Primera alta: se creará la persona administradora inicial."
@@ -1116,6 +1220,13 @@ if not st.session_state.usuario_autenticado:
             "Secreto de configuración inicial *",
             type="password",
             help="Solo está en Streamlit Secrets; no se guarda en la aplicación.",
+        )
+      else:
+        st.info(
+            "Para proteger al grupo, las nuevas altas requieren un código de invitación de un solo uso."
+        )
+        codigo_invitacion = st.text_input(
+            "Código de invitación *", type="password"
         )
 
       st.markdown("**Fecha de Nacimiento (Día / Mes / Año):**")
@@ -1183,6 +1294,8 @@ if not st.session_state.usuario_autenticado:
           st.error(
               "No se ha podido verificar la configuración inicial. Revisa el secreto de Streamlit."
           )
+        elif not primer_usuario and not invitacion_valida(codigo_invitacion):
+          st.error("El código de invitación no es válido, ya se ha usado o ha caducado.")
         else:
           fecha_nac_str = f"{reg_dia:02d}/{reg_mes:02d}/{reg_anio}"
           password_salt, password_hash = hash_password(reg_password)
@@ -1197,11 +1310,17 @@ if not st.session_state.usuario_autenticado:
               "rgpd": True,
           }
           st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
-          if guardar_usuarios_excel():
-            st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
-          else:
+          if not guardar_usuarios_excel():
             del st.session_state.usuarios_registrados[nombre_limpio]
             st.error("No se ha podido guardar el alta. Inténtalo de nuevo.")
+          elif not primer_usuario and not consumir_invitacion(
+              codigo_invitacion, nombre_limpio
+          ):
+            del st.session_state.usuarios_registrados[nombre_limpio]
+            guardar_usuarios_excel()
+            st.error("No se ha podido confirmar el código. Inténtalo de nuevo.")
+          else:
+            st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
     st.markdown("</div>", unsafe_allow_html=True)
 
   st.stop()
@@ -1248,7 +1367,7 @@ else:
 st.markdown(
     f"""
     <div class="ticker-container">
-        <div class="ticker-text">{txt_ticker}</div>
+        <div class="ticker-text">{escapar_html(txt_ticker)}</div>
     </div>
 """,
     unsafe_allow_html=True,
@@ -1281,7 +1400,7 @@ with col_head_left:
                 {img_html}
             </div>
             <div>
-                <h3 style="margin: 0; font-size: 18px; color: #FFFFFF;">¡Hola, {usuario_actual}!</h3>
+                <h3 style="margin: 0; font-size: 18px; color: #FFFFFF;">¡Hola, {escapar_html(usuario_actual)}!</h3>
                 <p style="margin: 0; font-size: 12px; color: #AAAAAA;">{fecha_hoy_str}</p>
             </div>
         </div>
@@ -1640,14 +1759,17 @@ with tab_eventos:
           if isinstance(ev["fecha"], datetime.date)
           else str(ev["fecha"])
       )
+      titulo_ev_html = escapar_html(ev.get("titulo"))
+      hora_ev_html = escapar_html(ev.get("hora"))
+      lugar_ev_html = escapar_html(ev.get("lugar"))
 
       st.markdown(
           f"""
             <div style="background: #12141a; border: {border_card}; border-radius: 16px; padding: 18px; margin-bottom: 12px;">
                 <span style="background: {color_badge}; color: #000; padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 800;">{estado_badge}</span>
-                <h3 style="color: #FFFFFF; margin: 8px 0 4px 0; font-size: 18px;">{ev['titulo']}</h3>
-                <p style="font-size: 14px; margin: 4px 0; color: #DDD;">📅 <b>Fecha:</b> {f_ev_str} ({ev['hora']})</p>
-                <p style="font-size: 14px; margin: 4px 0; color: #DDD;">📍 <b>Lugar:</b> {ev['lugar']}</p>
+                <h3 style="color: #FFFFFF; margin: 8px 0 4px 0; font-size: 18px;">{titulo_ev_html}</h3>
+                <p style="font-size: 14px; margin: 4px 0; color: #DDD;">📅 <b>Fecha:</b> {escapar_html(f_ev_str)} ({hora_ev_html})</p>
+                <p style="font-size: 14px; margin: 4px 0; color: #DDD;">📍 <b>Lugar:</b> {lugar_ev_html}</p>
             </div>
         """,
           unsafe_allow_html=True,
@@ -1842,47 +1964,58 @@ with tab_gastos_app:
       elif importe <= 0:
         st.error("Por favor, introduce un importe válido mayor a 0.")
       else:
-        ext = fichero.name.split(".")[-1].lower()
-        id_nuevo = (
-            int(st.session_state.gastos["ID"].max() + 1)
-            if not st.session_state.gastos.empty
-            else 1
+        tamano_fichero = getattr(fichero, "size", 0)
+        contenido_fichero = (
+            fichero.getvalue()
+            if isinstance(tamano_fichero, int) and tamano_fichero <= 10 * 1024 * 1024
+            else b""
         )
-
-        nombre_fichero = (
-            f"Gasto_{id_nuevo}_{fecha}_{usuario_actual}_{importe}EUR.{ext}"
+        ext, error_fichero = validate_receipt_upload(
+            fichero.name, tamano_fichero, contenido_fichero
         )
-        path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
+        if error_fichero:
+          st.error(error_fichero)
+        else:
+          id_nuevo = (
+              int(st.session_state.gastos["ID"].max() + 1)
+              if not st.session_state.gastos.empty
+              else 1
+          )
 
-        with open(path_destino, "wb") as f:
-          f.write(fichero.getbuffer())
+          nombre_fichero = (
+              f"Gasto_{id_nuevo}_{fecha}_{usuario_actual}_{importe}EUR.{ext}"
+          )
+          path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
 
-        concepto_final = f"{categoria_seleccionada}" + (
-            f" - {detalle_concepto}" if detalle_concepto else ""
-        )
-        enlace_excel = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
+          with open(path_destino, "wb") as f:
+            f.write(contenido_fichero)
 
-        nuevo_reg = {
-            "ID": id_nuevo,
-            "Fecha": str(fecha),
-            "Usuario": usuario_actual,
-            "Concepto": concepto_final,
-            "Importe": float(importe),
-            "Fichero": nombre_fichero,
-            "Reembolsado": "PENDIENTE ABONO",
-            "Enlace Ticket": enlace_excel,
-        }
-        st.session_state.gastos = pd.concat(
-            [st.session_state.gastos, pd.DataFrame([nuevo_reg])],
-            ignore_index=True,
-        )
-        st.session_state.gastos.to_excel(EXCEL_FILE, index=False)
+          concepto_final = f"{categoria_seleccionada}" + (
+              f" - {detalle_concepto}" if detalle_concepto else ""
+          )
+          enlace_excel = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
 
-        st.success("¡Gasto registrado con éxito!")
+          nuevo_reg = {
+              "ID": id_nuevo,
+              "Fecha": str(fecha),
+              "Usuario": usuario_actual,
+              "Concepto": concepto_final,
+              "Importe": float(importe),
+              "Fichero": nombre_fichero,
+              "Reembolsado": "PENDIENTE ABONO",
+              "Enlace Ticket": enlace_excel,
+          }
+          st.session_state.gastos = pd.concat(
+              [st.session_state.gastos, pd.DataFrame([nuevo_reg])],
+              ignore_index=True,
+          )
+          st.session_state.gastos.to_excel(EXCEL_FILE, index=False)
 
-        st.info(
-            "El gasto queda pendiente de revisión en el panel de administración."
-        )
+          st.success("¡Gasto registrado con éxito!")
+
+          st.info(
+              "El gasto queda pendiente de revisión en el panel de administración."
+          )
 
   with tab_sub_hist:
     st.markdown(
@@ -1919,11 +2052,11 @@ with tab_gastos_app:
               f"""
                         <div style="background: #121212; border-left: 5px solid #E74C3C; border: 1px solid #2A2A2A; padding: 14px; border-radius: 12px; margin-bottom: 12px;">
                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <strong style="color: #FFFFFF; font-size: 14px;">{row['Concepto']}</strong>
+                                <strong style="color: #FFFFFF; font-size: 14px;">{escapar_html(row['Concepto'])}</strong>
                                 <span style="background: {color_badge}; color: #000; padding: 2px 7px; border-radius: 6px; font-size: 9px; font-weight: 800;">{estado_txt}</span>
                             </div>
                             <div style="margin-top: 6px; font-size: 12px; color: #FFFFFF;">
-                                <span>Colaborador:</span> <b>{row['Usuario']}</b> | <span>Fecha:</span> {fecha_visual} | <span style="color: #E74C3C; font-weight: 800;">{formato_espanol(row['Importe'])} €</span>
+                                <span>Colaborador:</span> <b>{escapar_html(row['Usuario'])}</b> | <span>Fecha:</span> {escapar_html(fecha_visual)} | <span style="color: #E74C3C; font-weight: 800;">{formato_espanol(row['Importe'])} €</span>
                             </div>
                         </div>
                     """,
@@ -1954,6 +2087,31 @@ with tab_admin_app:
   else:
     st.success("Acceso de Administración Autorizado")
 
+    st.markdown("#### Crear código de alta")
+    st.caption(
+        "Cada código permite una sola alta y no se guarda en texto visible."
+    )
+    with st.form("form_crear_invitacion", clear_on_submit=True):
+      dias_invitacion = st.selectbox(
+          "Validez del código", [1, 7, 30], format_func=lambda days: f"{days} día(s)"
+      )
+      crear_codigo = st.form_submit_button("GENERAR CÓDIGO DE ALTA")
+      if crear_codigo:
+        codigo_nuevo = crear_invitacion(usuario_actual, dias_invitacion)
+        if codigo_nuevo:
+          st.session_state.ultimo_codigo_invitacion = codigo_nuevo
+        else:
+          st.error("No se ha podido guardar el código de alta.")
+
+    codigo_mostrado = st.session_state.get("ultimo_codigo_invitacion")
+    if codigo_mostrado:
+      st.success("Código creado. Cópialo y compártelo de forma privada.")
+      st.code(codigo_mostrado, language=None)
+      if st.button("Ocultar código", key="ocultar_codigo_invitacion"):
+        st.session_state.ultimo_codigo_invitacion = None
+        st.rerun()
+
+    st.markdown("---")
     st.markdown("#### Lanzar Nueva Encuesta de Bolo")
     with st.form("form_crear_bolo_admin"):
       b_tit = st.text_input("Título de la Actuación")
@@ -2088,11 +2246,11 @@ with tab_admin_app:
             f"""
                 <div style="background: #12141a; border-left: 4px solid #E74C3C; border: 1px solid #2a2a2a; border-radius: 10px; padding: 12px; margin-bottom: 10px;">
                     <div style="display: flex; justify-content: space-between; font-size: 11px; color: #E74C3C; font-weight: 700; margin-bottom: 4px;">
-                        <span>👤 {m_conf.get('usuario', 'Anónimo')}</span>
-                        <span>📅 {m_conf.get('fecha', '')}</span>
+                        <span>👤 {escapar_html(m_conf.get('usuario', 'Anónimo'))}</span>
+                        <span>📅 {escapar_html(m_conf.get('fecha', ''))}</span>
                     </div>
                     <div style="color: #FFFFFF; font-size: 13px; line-height: 1.4;">
-                        "{m_conf.get('mensaje', '')}"
+                        "{escapar_html(m_conf.get('mensaje', ''))}"
                     </div>
                 </div>
             """,

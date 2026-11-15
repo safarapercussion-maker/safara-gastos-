@@ -14,6 +14,14 @@ import unicodedata
 
 PBKDF2_ITERATIONS = 390_000
 MIN_PASSWORD_LENGTH = 12
+MAX_RECEIPT_BYTES = 10 * 1024 * 1024
+
+_RECEIPT_SIGNATURES = {
+    "png": b"\x89PNG\r\n\x1a\n",
+    "jpg": b"\xff\xd8\xff",
+    "jpeg": b"\xff\xd8\xff",
+    "pdf": b"%PDF-",
+}
 
 
 def normalize_display_name(value):
@@ -97,3 +105,35 @@ def verify_bootstrap_token(provided, configured):
   return len(configured) >= 32 and hmac.compare_digest(
       provided.encode("utf-8"), configured.encode("utf-8")
   )
+
+
+def generate_invitation_code():
+  """Genera un código de alta de alta entropía para un único uso."""
+  return secrets.token_urlsafe(18)
+
+
+def hash_invitation_code(code):
+  return hashlib.sha256(str(code or "").strip().encode("utf-8")).hexdigest()
+
+
+def verify_invitation_code(code, expected_hash):
+  provided_hash = hash_invitation_code(code)
+  return hmac.compare_digest(provided_hash, str(expected_hash or ""))
+
+
+def validate_receipt_upload(filename, size_bytes, content):
+  """Valida tamaño, extensión y firma de un justificante antes de guardarlo."""
+  if not filename or not isinstance(filename, str):
+    return None, "El justificante no tiene un nombre de archivo válido."
+  extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+  if extension not in _RECEIPT_SIGNATURES:
+    return None, "Solo se permiten archivos PNG, JPG, JPEG o PDF."
+  if not isinstance(size_bytes, int) or size_bytes <= 0:
+    return None, "El justificante está vacío o no se ha podido leer."
+  if size_bytes > MAX_RECEIPT_BYTES:
+    return None, "El justificante supera el límite de 10 MB."
+  if not isinstance(content, (bytes, bytearray)) or not content.startswith(
+      _RECEIPT_SIGNATURES[extension]
+  ):
+    return None, "El contenido del justificante no coincide con su formato."
+  return extension, None

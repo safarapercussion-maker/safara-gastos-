@@ -4,7 +4,6 @@ import io
 import os
 import random
 import re
-import urllib.parse
 import zipfile
 
 try:
@@ -14,6 +13,18 @@ except ImportError:
 
 import pandas as pd
 import streamlit as st
+
+from safara_security import (
+    hash_password,
+    normalize_display_name,
+    normalized_name_key,
+    validate_display_name,
+    validate_email,
+    validate_password,
+    validate_phone,
+    verify_bootstrap_token,
+    verify_password,
+)
 
 st.set_page_config(
     page_title="Safara Percussion - App Oficial",
@@ -410,7 +421,9 @@ RECEIPTS_DIR = "recibos_subidos"
 os.makedirs(RECEIPTS_DIR, exist_ok=True)
 EXCEL_FILE = "gastos_safara.xlsx"
 SALDO_FILE = "saldo_caja.txt"
-EXCEL_USUARIOS = "usuarios_safara.xlsx"
+# Fichero nuevo y deliberadamente separado del registro heredado de credenciales.
+# No se migra ni se carga el fichero anterior: las pruebas empiezan sin cuentas.
+EXCEL_USUARIOS = "usuarios_safara_v2.xlsx"
 VOTOS_PERSIST_FILE = "votos_safara_historial.xlsx"
 CONFESIONARIO_FILE = "confesionario_safara.xlsx"
 ACTUACIONES_FILE = "actuaciones_safara.xlsx"
@@ -875,86 +888,99 @@ if "saldo_caja" not in st.session_state:
   else:
     st.session_state.saldo_caja = 1250.50
 
-if "admins" not in st.session_state:
-  st.session_state.admins = ["Iñigo", "Rosi", "Xabi", "Resano", "Diego", "Admin"]
+USER_REQUIRED_COLUMNS = {
+    "Nombre",
+    "rol",
+    "password_salt",
+    "password_hash",
+    "email",
+    "tel",
+    "fnac",
+    "instrumento",
+    "rgpd",
+}
 
-if "usuarios_registrados" not in st.session_state:
-  if os.path.exists(EXCEL_USUARIOS):
-    try:
-      df_u = pd.read_excel(EXCEL_USUARIOS)
-      st.session_state.usuarios_registrados = df_u.set_index(
-          "Nombre"
-      ).to_dict(orient="index")
-    except:
-      st.session_state.usuarios_registrados = {
-          "Admin": {
-              "pin": "1234",
-              "email": "admin@safarapercussion.com",
-              "tel": "600000000",
-              "fnac": "01/01/1990",
-              "instrumento": "Surdo",
-              "rgpd": True,
-          },
-          "Diego": {
-              "pin": "1234",
-              "email": "85diegoalvarez@gmail.com",
-              "tel": "650184254",
-              "fnac": "15/06/1998",
-              "instrumento": "Surdo de contra",
-              "rgpd": True,
-          },
-      }
-  else:
-    st.session_state.usuarios_registrados = {
-        "Admin": {
-            "pin": "1234",
-            "email": "admin@safarapercussion.com",
-            "tel": "600000000",
-            "fnac": "01/01/1990",
-            "instrumento": "Surdo",
-            "rgpd": True,
-        },
-        "Diego": {
-            "pin": "1234",
-            "email": "85diegoalvarez@gmail.com",
-            "tel": "650184254",
-            "fnac": "15/06/1998",
-            "instrumento": "Surdo de contra",
-            "rgpd": True,
-        },
-    }
+
+def cargar_usuarios_seguro():
+  """Carga solo el registro v2 con contraseñas hasheadas y roles explícitos."""
+  if not os.path.exists(EXCEL_USUARIOS):
+    return {}
+  try:
+    df_u = pd.read_excel(EXCEL_USUARIOS)
+    if not USER_REQUIRED_COLUMNS.issubset(df_u.columns):
+      return {}
+    usuarios = {}
+    for record in df_u.to_dict(orient="records"):
+      nombre = normalize_display_name(record.get("Nombre"))
+      if (
+          not nombre
+          or normalized_name_key(nombre)
+          in {normalized_name_key(item) for item in usuarios}
+          or str(record.get("rol")) not in {"admin", "usuario"}
+          or not str(record.get("password_salt") or "")
+          or not str(record.get("password_hash") or "")
+      ):
+        continue
+      usuarios[nombre] = {
+          "rol": str(record["rol"]),
+          "password_salt": str(record["password_salt"]),
+          "password_hash": str(record["password_hash"]),
+          "email": str(record["email"]),
+          "tel": str(record["tel"]),
+          "fnac": str(record["fnac"]),
+          "instrumento": str(record["instrumento"]),
+          "rgpd": bool(record["rgpd"]),
+        }
+    return usuarios
+  except Exception:
+    return {}
 
 
 def guardar_usuarios_excel():
-  df_u = pd.DataFrame.from_dict(
-      st.session_state.usuarios_registrados, orient="index"
-  ).reset_index()
-  df_u.rename(columns={"index": "Nombre"}, inplace=True)
-  df_u.to_excel(EXCEL_USUARIOS, index=False)
+  """Persiste el registro de usuarios de forma atómica y sin contraseñas."""
+  try:
+    df_u = pd.DataFrame.from_dict(
+        st.session_state.usuarios_registrados, orient="index"
+    ).reset_index()
+    df_u.rename(columns={"index": "Nombre"}, inplace=True)
+    df_u = df_u[
+        [
+            "Nombre",
+            "rol",
+            "password_salt",
+            "password_hash",
+            "email",
+            "tel",
+            "fnac",
+            "instrumento",
+            "rgpd",
+        ]
+    ]
+    temporal = f"{EXCEL_USUARIOS}.tmp.xlsx"
+    df_u.to_excel(temporal, index=False)
+    os.replace(temporal, EXCEL_USUARIOS)
+    return True
+  except Exception:
+    return False
 
 
-# ==============================================================================
-# --- ACCIONES DE VOTO VÍA URL (CLIC DIRECTO EN LOGOS) -------------------------
-# ==============================================================================
-params = st.query_params
-user_param = params.get("user")
+def obtener_token_bootstrap():
+  try:
+    return str(st.secrets.get("bootstrap_admin_token", ""))
+  except Exception:
+    return ""
 
-if "action" in params:
-  act = params.get("action")
-  u_voter = params.get("voter")
-  if act and u_voter:
-    if act == "v_ens_si":
-      registrar_voto_backend("ensayo_proximo", u_voter, "SI")
-    elif act == "v_ens_no":
-      registrar_voto_backend("ensayo_proximo", u_voter, "NO")
-    elif act == "v_cena_si":
-      registrar_voto_backend("cena_proxima", u_voter, "SI")
-    elif act == "v_cena_no":
-      registrar_voto_backend("cena_proxima", u_voter, "NO")
 
-  st.query_params.clear()
-  if user_param:
-    st.query_params["user"] = user_param
+def es_administrador(nombre):
+  return bool(
+      nombre
+      and st.session_state.usuarios_registrados.get(nombre, {}).get("rol")
+      == "admin"
+  )
+
+
+if "usuarios_registrados" not in st.session_state:
+  st.session_state.usuarios_registrados = cargar_usuarios_seguro()
 
 if "usuario_autenticado" not in st.session_state:
   st.session_state.usuario_autenticado = None
@@ -962,28 +988,22 @@ if "usuario_autenticado" not in st.session_state:
 if "ultimo_acceso" not in st.session_state:
   st.session_state.ultimo_acceso = datetime.datetime.now()
 
-if user_param and user_param in st.session_state.usuarios_registrados:
-  if not st.session_state.usuario_autenticado:
-    st.session_state.usuario_autenticado = user_param
+if "fallos_acceso" not in st.session_state:
+  st.session_state.fallos_acceso = 0
+
+if "bloqueado_hasta" not in st.session_state:
+  st.session_state.bloqueado_hasta = None
+
+if "mostrar_recuperacion" not in st.session_state:
+  st.session_state.mostrar_recuperacion = False
 
 if st.session_state.usuario_autenticado:
   ahora = datetime.datetime.now()
   tiempo_inactivo = ahora - st.session_state.ultimo_acceso
   if tiempo_inactivo > datetime.timedelta(minutes=30):
     st.session_state.usuario_autenticado = None
-    st.query_params.clear()
   else:
     st.session_state.ultimo_acceso = ahora
-    st.query_params["user"] = st.session_state.usuario_autenticado
-
-if "ultimo_whatsapp_url" not in st.session_state:
-  st.session_state.ultimo_whatsapp_url = None
-
-if "mostrar_recuperacion" not in st.session_state:
-  st.session_state.mostrar_recuperacion = False
-
-if "admin_autenticado" not in st.session_state:
-  st.session_state.admin_autenticado = False
 
 # ==============================================================================
 # --- PANTALLA DE ACCESO Y REGISTRO --------------------------------------------
@@ -1006,42 +1026,52 @@ if not st.session_state.usuario_autenticado:
   with tab_login:
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
 
-    nombres_disponibles = ["Selecciona tu usuario..."] + list(
-        st.session_state.usuarios_registrados.keys()
+    nombres_disponibles = ["Selecciona tu usuario..."] + sorted(
+        st.session_state.usuarios_registrados.keys(), key=normalized_name_key
     )
     nombre_login = st.selectbox("Safarer", nombres_disponibles)
-    pin_login = st.text_input(
-        "PIN de Acceso", type="password", placeholder="Introduce tu PIN"
+    password_login = st.text_input(
+        "Contraseña de Acceso",
+        type="password",
+        placeholder="Introduce tu contraseña",
     )
 
     if st.button("¡VAAAMONOSSS!"):
-      if nombre_login == "Selecciona tu usuario...":
+      bloqueado_hasta = st.session_state.bloqueado_hasta
+      if bloqueado_hasta and datetime.datetime.now() < bloqueado_hasta:
+        segundos = int((bloqueado_hasta - datetime.datetime.now()).total_seconds()) + 1
+        st.error(f"Espera {segundos} segundos antes de intentarlo de nuevo.")
+      elif nombre_login == "Selecciona tu usuario...":
         st.error("Por favor, selecciona tu nombre.")
-      elif not pin_login:
-        st.error("Por favor, introduce tu PIN.")
+      elif not password_login:
+        st.error("Por favor, introduce tu contraseña.")
       else:
         user_info = st.session_state.usuarios_registrados.get(nombre_login)
-        if user_info and str(user_info.get("pin")).strip() == pin_login.strip():
+        if user_info and verify_password(
+            password_login,
+            user_info.get("password_salt"),
+            user_info.get("password_hash"),
+        ):
           st.session_state.usuario_autenticado = nombre_login
           st.session_state.ultimo_acceso = datetime.datetime.now()
-          st.query_params["user"] = nombre_login
-          st.success(f"¡Bienvenido de nuevo, {nombre_login}!")
-          st.rerun()
-        elif nombre_login in st.session_state.admins and pin_login.strip() in [
-            "1234",
-            "2026",
-        ]:
-          st.session_state.usuario_autenticado = nombre_login
-          st.session_state.ultimo_acceso = datetime.datetime.now()
-          st.query_params["user"] = nombre_login
+          st.session_state.fallos_acceso = 0
+          st.session_state.bloqueado_hasta = None
           st.success(f"¡Bienvenido de nuevo, {nombre_login}!")
           st.rerun()
         else:
-          st.error("PIN incorrecto.")
+          st.session_state.fallos_acceso += 1
+          if st.session_state.fallos_acceso >= 5:
+            st.session_state.bloqueado_hasta = datetime.datetime.now() + datetime.timedelta(
+                minutes=1
+            )
+            st.session_state.fallos_acceso = 0
+            st.error("Demasiados intentos. El acceso queda bloqueado durante un minuto.")
+          else:
+            st.error("Contraseña incorrecta.")
 
     if not st.session_state.mostrar_recuperacion:
       if st.button(
-          "¡Vaya memoria la tuya! ¿Has olvidado la contraseña?",
+          "¿Has olvidado la contraseña?",
           key="btn_recuperar_toggle",
       ):
         st.session_state.mostrar_recuperacion = True
@@ -1050,50 +1080,43 @@ if not st.session_state.usuario_autenticado:
     if st.session_state.mostrar_recuperacion:
       st.markdown(
           "<p style='color:#E74C3C; font-size:0.8rem; font-weight:700;"
-          " margin-top:10px; text-align:center;'>Recuperación de PIN vía"
-          " WhatsApp:</p>",
+          " margin-top:10px; text-align:center;'>Por seguridad, la"
+          " contraseña no se envía ni se muestra. Contacta con una persona"
+          " administradora para restablecerla.</p>",
           unsafe_allow_html=True,
       )
-      tel_recup = st.text_input(
-          "Teléfono móvil registrado", placeholder="600000000"
-      )
-      col_r1, col_r2 = st.columns(2)
-      with col_r1:
-        if st.button("Enviar WhatsApp"):
-          if nombre_login == "Selecciona tu usuario...":
-            st.warning("Selecciona tu usuario arriba.")
-          elif not tel_recup:
-            st.warning("Introduce tu teléfono.")
-          else:
-            u_data = st.session_state.usuarios_registrados.get(
-                nombre_login, {"pin": "1234"}
-            )
-            pin_rec = u_data.get("pin", "1234")
-            msg_wa = f"Hola {nombre_login}, tu PIN de acceso para Safara Percussion es: {pin_rec}."
-            url_wa = f"https://wa.me/34{tel_recup.strip()}?text={urllib.parse.quote(msg_wa)}"
-            st.markdown(
-                f"""
-                                <div style="margin-top: 5px; text-align: center;">
-                                    <a href="{url_wa}" target="_blank" style="background: #25D366; color: #FFFFFF; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 800; text-decoration: none; display: inline-block;">
-                                        Abrir WhatsApp 📱
-                                    </a>
-                                </div>
-                            """,
-                unsafe_allow_html=True,
-            )
-      with col_r2:
-        if st.button("Cerrar"):
-          st.session_state.mostrar_recuperacion = False
-          st.rerun()
+      if st.button("Cerrar"):
+        st.session_state.mostrar_recuperacion = False
+        st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
   with tab_registro:
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-    with st.form("form_registro_completo"):
+    primer_usuario = not st.session_state.usuarios_registrados
+    with st.form("form_registro_completo", clear_on_submit=True):
       reg_nombre = st.text_input("Nombre y Apellidos *")
       reg_email = st.text_input("Correo Electrónico *")
-      reg_tel = st.text_input("Teléfono Móvil (para recibir PIN) *")
+      reg_tel = st.text_input("Teléfono Móvil de contacto *")
+      reg_password = st.text_input(
+          "Contraseña de Acceso *",
+          type="password",
+          help="Mínimo 12 caracteres, con letras y números.",
+      )
+      reg_password_confirm = st.text_input(
+          "Repite la contraseña *", type="password"
+      )
+
+      token_bootstrap = ""
+      if primer_usuario:
+        st.info(
+            "Primera alta: se creará la persona administradora inicial."
+        )
+        token_bootstrap = st.text_input(
+            "Secreto de configuración inicial *",
+            type="password",
+            help="Solo está en Streamlit Secrets; no se guarda en la aplicación.",
+        )
 
       st.markdown("**Fecha de Nacimiento (Día / Mes / Año):**")
       col_d, col_m, col_a = st.columns(3)
@@ -1124,48 +1147,61 @@ if not st.session_state.usuario_autenticado:
           "Acepto la política de privacidad y autorizo derechos de imagen *"
       )
 
-      btn_reg_submit = st.form_submit_button("SOLICITAR ALTA Y GENERAR PIN")
+      btn_reg_submit = st.form_submit_button("SOLICITAR ALTA")
 
       if btn_reg_submit:
-        if not (reg_nombre and reg_email and reg_tel):
+        nombre_limpio = normalize_display_name(reg_nombre)
+        email_limpio = validate_email(reg_email)
+        telefono_limpio = validate_phone(reg_tel)
+        error_nombre = validate_display_name(nombre_limpio)
+        error_password = validate_password(reg_password)
+        ya_registrado = any(
+            normalized_name_key(nombre_limpio) == normalized_name_key(nombre)
+            for nombre in st.session_state.usuarios_registrados
+        )
+        if not (reg_nombre and reg_email and reg_tel and reg_password):
           st.error("Por favor, completa todos los campos obligatorios.")
+        elif error_nombre:
+          st.error(error_nombre)
+        elif not email_limpio:
+          st.error("Introduce un correo electrónico válido.")
+        elif not telefono_limpio:
+          st.error("Introduce un teléfono móvil válido.")
+        elif error_password:
+          st.error(error_password)
+        elif reg_password != reg_password_confirm:
+          st.error("Las contraseñas no coinciden.")
         elif not reg_acepta_rgpd:
           st.warning(
               "Debes aceptar la casilla de Protección de Datos e Imagen."
           )
-        elif reg_nombre in st.session_state.usuarios_registrados:
+        elif ya_registrado:
           st.error("Este nombre ya está registrado en el sistema.")
+        elif primer_usuario and not verify_bootstrap_token(
+            token_bootstrap, obtener_token_bootstrap()
+        ):
+          st.error(
+              "No se ha podido verificar la configuración inicial. Revisa el secreto de Streamlit."
+          )
         else:
-          pin_generado = f"{random.randint(1000, 9999)}"
           fecha_nac_str = f"{reg_dia:02d}/{reg_mes:02d}/{reg_anio}"
-
-          st.session_state.usuarios_registrados[reg_nombre] = {
-              "pin": pin_generado,
-              "email": reg_email,
-              "tel": reg_tel,
+          password_salt, password_hash = hash_password(reg_password)
+          nuevo_usuario = {
+              "rol": "admin" if primer_usuario else "usuario",
+              "password_salt": password_salt,
+              "password_hash": password_hash,
+              "email": email_limpio,
+              "tel": telefono_limpio,
               "fnac": fecha_nac_str,
               "instrumento": reg_instrumento,
               "rgpd": True,
           }
-          guardar_usuarios_excel()
-
-          st.success(
-              f"¡Alta tramitada! Tu PIN personal es: **{pin_generado}**"
-          )
-
-          texto_w_pin = f"Hola {reg_nombre}, tu PIN de acceso para la app de Safara Percussion es: {pin_generado}."
-          url_wa_pin = f"https://wa.me/34{reg_tel}?text={urllib.parse.quote(texto_w_pin)}"
-
-          st.markdown(
-              f"""
-                        <div style="margin-top: 15px; text-align: center;">
-                            <a href="{url_wa_pin}" target="_blank" style="background: #25D366; color: #FFFFFF; padding: 10px 18px; border-radius: 10px; font-weight: 800; text-decoration: none; display: inline-block;">
-                                Enviar PIN por WhatsApp 📱
-                            </a>
-                        </div>
-                    """,
-              unsafe_allow_html=True,
-          )
+          st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
+          if guardar_usuarios_excel():
+            st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
+          else:
+            del st.session_state.usuarios_registrados[nombre_limpio]
+            st.error("No se ha podido guardar el alta. Inténtalo de nuevo.")
     st.markdown("</div>", unsafe_allow_html=True)
 
   st.stop()
@@ -1223,9 +1259,7 @@ with col_head_right:
   st.markdown('<div class="btn-logout-discreto">', unsafe_allow_html=True)
   if st.button("⏻ ¡Me pirooooo!", key="btn_logout_piro"):
     st.session_state.usuario_autenticado = None
-    st.session_state.ultimo_whatsapp_url = None
     st.session_state.mostrar_recuperacion = False
-    st.query_params.clear()
     st.rerun()
   st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1349,28 +1383,31 @@ with tab_movidas:
       "poll-img-red-sel" if voto_ens_actual == "NO" else "poll-img-red-norm"
   )
 
-  url_voto_si = f"?user={usuario_actual}&action=v_ens_si&voter={usuario_actual}"
-  url_voto_no = f"?user={usuario_actual}&action=v_ens_no&voter={usuario_actual}"
-
   st.markdown(
       f"""
         <div class="safara-poll-row">
             <div class="safara-poll-col">
-                <a href="{url_voto_si}" target="_self" style="text-decoration:none;">
-                    <img src="{logo_b64_inline}" class="poll-img-btn {img_si_cls}" />
-                </a>
+                <img src="{logo_b64_inline}" class="poll-img-btn {img_si_cls}" />
                 <div class="poll-label-green">A tope, se le da</div>
             </div>
             <div class="safara-poll-col">
-                <a href="{url_voto_no}" target="_self" style="text-decoration:none;">
-                    <img src="{logo_b64_inline}" class="poll-img-btn {img_no_cls}" />
-                </a>
+                <img src="{logo_b64_inline}" class="poll-img-btn {img_no_cls}" />
                 <div class="poll-label-red">No puedo, tengo lío</div>
             </div>
         </div>
     """,
       unsafe_allow_html=True,
   )
+
+  voto_ens_si, voto_ens_no = st.columns(2)
+  with voto_ens_si:
+    if st.button("A tope, se le da", key="btn_ens_si"):
+      registrar_voto_backend("ensayo_proximo", usuario_actual, "SI")
+      st.rerun()
+  with voto_ens_no:
+    if st.button("No puedo, tengo lío", key="btn_ens_no"):
+      registrar_voto_backend("ensayo_proximo", usuario_actual, "NO")
+      st.rerun()
 
   st.markdown(
       f"<p style='text-align: center; font-size: 14px; font-weight: 800;"
@@ -1425,28 +1462,31 @@ with tab_movidas:
       "poll-img-red-sel" if voto_cena_actual == "NO" else "poll-img-red-norm"
   )
 
-  url_c_si = f"?user={usuario_actual}&action=v_cena_si&voter={usuario_actual}"
-  url_c_no = f"?user={usuario_actual}&action=v_cena_no&voter={usuario_actual}"
-
   st.markdown(
       f"""
         <div class="safara-poll-row">
             <div class="safara-poll-col">
-                <a href="{url_c_si}" target="_self" style="text-decoration:none;">
-                    <img src="{logo_b64_inline}" class="poll-img-btn {c_img_si_cls}" />
-                </a>
+                <img src="{logo_b64_inline}" class="poll-img-btn {c_img_si_cls}" />
                 <div class="poll-label-green">A tope, se le da</div>
             </div>
             <div class="safara-poll-col">
-                <a href="{url_c_no}" target="_self" style="text-decoration:none;">
-                    <img src="{logo_b64_inline}" class="poll-img-btn {c_img_no_cls}" />
-                </a>
+                <img src="{logo_b64_inline}" class="poll-img-btn {c_img_no_cls}" />
                 <div class="poll-label-red">No puedo, tengo lío</div>
             </div>
         </div>
     """,
       unsafe_allow_html=True,
   )
+
+  voto_cena_si, voto_cena_no = st.columns(2)
+  with voto_cena_si:
+    if st.button("A tope, se le da", key="btn_cena_si"):
+      registrar_voto_backend("cena_proxima", usuario_actual, "SI")
+      st.rerun()
+  with voto_cena_no:
+    if st.button("No puedo, tengo lío", key="btn_cena_no"):
+      registrar_voto_backend("cena_proxima", usuario_actual, "NO")
+      st.rerun()
 
   df_votos_cena = obtener_todos_votos_encuesta("cena_proxima")
   num_cenan = (
@@ -1840,25 +1880,9 @@ with tab_gastos_app:
 
         st.success("¡Gasto registrado con éxito!")
 
-        texto_w = f"¡Aupa! Hay nuevo gasto registrado en la app: {formato_espanol(importe)} € por {concepto_final}. Ticket adjuntado y listo para revisión y abono."
-        st.session_state.ultimo_whatsapp_url = (
-            f"https://wa.me/34650184254?text={urllib.parse.quote(texto_w)}"
+        st.info(
+            "El gasto queda pendiente de revisión en el panel de administración."
         )
-
-    if st.session_state.ultimo_whatsapp_url:
-      st.markdown(
-          f"""
-                <div style="margin-top: 15px; text-align: center;">
-                    <a href="{st.session_state.ultimo_whatsapp_url}" target="_blank" style="background: #25D366; color: #FFFFFF; padding: 12px 20px; border-radius: 12px; font-weight: 800; text-decoration: none; display: inline-block; box-shadow: 0 4px 15px rgba(37, 211, 102, 0.4);">
-                        Avisar por WhatsApp al Tesorero 📱
-                    </a>
-                </div>
-            """,
-          unsafe_allow_html=True,
-      )
-      if st.button("✔ Confirmar Aviso Enviado"):
-        st.session_state.ultimo_whatsapp_url = None
-        st.rerun()
 
   with tab_sub_hist:
     st.markdown(
@@ -1925,20 +1949,9 @@ with tab_gastos_app:
 
 # --- PESTAÑA 4: PANEL DE ADMINISTRACIÓN ---
 with tab_admin_app:
-  pin_ingresado = st.text_input(
-      "Clave de Administración",
-      type="password",
-      placeholder="Introduce la contraseña...",
-  )
-  PIN_SECRETO = "safara2026"
-
-  if pin_ingresado == PIN_SECRETO:
-    st.session_state.admin_autenticado = True
-  elif pin_ingresado != "":
-    st.session_state.admin_autenticado = False
-    st.error("Contraseña incorrecta.")
-
-  if st.session_state.admin_autenticado:
+  if not es_administrador(usuario_actual):
+    st.info("Esta sección está disponible solo para personas administradoras.")
+  else:
     st.success("Acceso de Administración Autorizado")
 
     st.markdown("#### Lanzar Nueva Encuesta de Bolo")
@@ -2090,18 +2103,18 @@ with tab_admin_app:
 
     st.markdown("---")
 
-    st.markdown("#### Listado Oficial de Socios Registrados y PINs")
+    st.markdown("#### Listado Oficial de Socios Registrados")
     if st.session_state.usuarios_registrados:
       df_regs = pd.DataFrame.from_dict(
           st.session_state.usuarios_registrados, orient="index"
-      )
+      ).drop(columns=["password_salt", "password_hash"], errors="ignore")
       st.dataframe(df_regs, use_container_width=True)
 
       csv_u = df_regs.reset_index().to_csv(index=False).encode("utf-8")
       st.download_button(
-          label="📥 Descargar Registro de Socios y PINs (Excel/CSV)",
+          label="📥 Descargar Registro de Socios (CSV)",
           data=csv_u,
-          file_name=f"SAFARA_SOCIOS_PINS_{datetime.date.today()}.csv",
+          file_name=f"SAFARA_SOCIOS_{datetime.date.today()}.csv",
           mime="text/csv",
       )
 
@@ -2113,10 +2126,26 @@ with tab_admin_app:
       )
 
       if st.button("Eliminar Socio Seleccionado"):
-        del st.session_state.usuarios_registrados[socio_a_borrar]
-        guardar_usuarios_excel()
-        st.success(f"Usuario '{socio_a_borrar}' eliminado correctamente.")
-        st.rerun()
+        es_ultimo_admin = (
+            st.session_state.usuarios_registrados[socio_a_borrar].get("rol")
+            == "admin"
+            and sum(
+                user.get("rol") == "admin"
+                for user in st.session_state.usuarios_registrados.values()
+            ) == 1
+        )
+        if es_ultimo_admin:
+          st.error("No se puede eliminar a la última persona administradora.")
+        else:
+          usuario_eliminado = st.session_state.usuarios_registrados.pop(
+              socio_a_borrar
+          )
+          if guardar_usuarios_excel():
+            st.success(f"Usuario '{socio_a_borrar}' eliminado correctamente.")
+            st.rerun()
+          else:
+            st.session_state.usuarios_registrados[socio_a_borrar] = usuario_eliminado
+            st.error("No se ha podido guardar el cambio.")
     else:
       st.info("No hay socios registrados en el sistema.")
 

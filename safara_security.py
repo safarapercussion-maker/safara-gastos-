@@ -94,4 +94,6 @@ def verify_bootstrap_token(provided, configured):
   """Verifica el secreto inicial sin exponerlo ni aceptarlo por defecto."""
   configured = str(configured or "")
   provided = str(provided or "")
-  return len(configured) >= 32 and hmac.compare_digest(provided, configured)
+  return len(configured) >= 32 and hmac.compare_digest(
+      provided.encode("utf-8"), configured.encode("utf-8")
+  )

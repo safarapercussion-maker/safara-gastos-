@@ -30,6 +30,13 @@ from safara_security import (
     verify_invitation_code,
     verify_password,
 )
+from safara_google_storage import (
+    GoogleSafaraStorage,
+    StorageConfigurationError,
+    StorageOperationError,
+    is_enabled as google_storage_enabled,
+    GoogleStorageConfig,
+)
 
 st.set_page_config(
     page_title="Safara Percussion - App Oficial",
@@ -465,6 +472,33 @@ def sincronizacion_google_habilitada():
   return value is True or str(value).strip().lower() in {"true", "1", "si", "sí"}
 
 
+_google_storage = None
+_google_storage_error = ""
+
+
+def obtener_almacenamiento_google():
+  """Devuelve el único almacén autorizado; no usa ni la hoja histórica ni credenciales en código."""
+  global _google_storage, _google_storage_error
+  if not google_storage_enabled(st.secrets):
+    return None
+  if _google_storage is not None:
+    return _google_storage
+  if _google_storage_error:
+    return None
+  try:
+    _google_storage = GoogleSafaraStorage(GoogleStorageConfig.from_secrets(st.secrets))
+    _google_storage.ensure_schema()
+    return _google_storage
+  except StorageConfigurationError as error:
+    _google_storage_error = str(error)
+    return None
+
+
+def usar_almacenamiento_google():
+  """Indica que Google se activó y evita escribir una copia local que desaparecería al reiniciar."""
+  return google_storage_enabled(st.secrets)
+
+
 def guardar_excel_atomico(dataframe, destino):
   """Evita dejar un Excel incompleto si la escritura se interrumpe."""
   temporal = f"{destino}.tmp.xlsx"
@@ -499,6 +533,11 @@ def guardar_texto_atomico(texto, destino):
 
 def registrar_auditoria(evento, usuario="", detalle=""):
   """Registra solo eventos técnicos; nunca secretos, contraseñas ni códigos."""
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    marca_tiempo = datetime.datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
+    storage.append_audit(str(evento), str(usuario), str(detalle), marca_tiempo)
+    return
   try:
     marca_tiempo = datetime.datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
     linea = " | ".join(
@@ -511,7 +550,18 @@ def registrar_auditoria(evento, usuario="", detalle=""):
 
 # --- INICIALIZACIÓN DE VOTOS ---
 if "votos_historial" not in st.session_state:
-  if os.path.exists(VOTOS_PERSIST_FILE):
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    try:
+      st.session_state.votos_historial = pd.DataFrame(
+          storage.read_records("Votos"),
+          columns=["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"],
+      )
+    except StorageOperationError:
+      st.session_state.votos_historial = pd.DataFrame(
+          columns=["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"]
+      )
+  elif os.path.exists(VOTOS_PERSIST_FILE) and not usar_almacenamiento_google():
     try:
       st.session_state.votos_historial = pd.read_excel(VOTOS_PERSIST_FILE)
     except:
@@ -537,6 +587,18 @@ if "votos_historial" not in st.session_state:
 
 
 def guardar_votos_persistentes():
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    try:
+      storage.replace_records("Votos", st.session_state.votos_historial.to_dict(orient="records"))
+      return True
+    except StorageOperationError:
+      st.error("No se han podido guardar los votos en Google. Inténtalo de nuevo.")
+      registrar_auditoria("error_guardado_votos")
+      return False
+  if usar_almacenamiento_google():
+    st.error("La conexión segura con Google aún no está lista. No se han guardado los votos.")
+    return False
   if not guardar_excel_atomico(st.session_state.votos_historial, VOTOS_PERSIST_FILE):
     st.error("No se han podido guardar los votos. Inténtalo de nuevo.")
     registrar_auditoria("error_guardado_votos")
@@ -546,6 +608,9 @@ def guardar_votos_persistentes():
 
 # --- FUNCIONES DE SINCRONIZACIÓN Y GESTIÓN CON GOOGLE SHEETS (NUBE) ---
 def sincronizar_bolo_en_sheets(titulo, fecha_obj, hora_str, lugar_str, estado_str):
+  if usar_almacenamiento_google():
+    # Las actuaciones ya se guardan completas en la pestaña de pruebas propia.
+    return 1 if obtener_almacenamiento_google() else None
   try:
     if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets:
       import gspread
@@ -597,6 +662,8 @@ def sincronizar_bolo_en_sheets(titulo, fecha_obj, hora_str, lugar_str, estado_st
 
 
 def cambiar_estado_bolo_en_sheets(sheet_col, nuevo_estado):
+  if usar_almacenamiento_google():
+    return
   try:
     if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets and sheet_col:
       import gspread
@@ -620,6 +687,8 @@ def cambiar_estado_bolo_en_sheets(sheet_col, nuevo_estado):
 
 
 def eliminar_bolo_en_sheets(sheet_col):
+  if usar_almacenamiento_google():
+    return
   try:
     if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets and sheet_col:
       import gspread
@@ -647,6 +716,8 @@ def eliminar_bolo_en_sheets(sheet_col):
 
 
 def registrar_voto_en_sheets_cloud(encuesta_id, usuario_id, respuesta):
+  if usar_almacenamiento_google():
+    return
   try:
     if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets and str(encuesta_id).startswith(
         "bolo_"
@@ -776,6 +847,12 @@ def guardar_actuaciones_excel():
       df_act["fecha"] = df_act["fecha"].apply(
           lambda x: x.isoformat() if isinstance(x, datetime.date) else str(x)
       )
+    storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+    if storage:
+      storage.replace_records("Actuaciones", df_act.to_dict(orient="records"))
+      return True
+    if usar_almacenamiento_google():
+      return False
     if not guardar_excel_atomico(df_act, ACTUACIONES_FILE):
       st.error("No se han podido guardar las actuaciones.")
       return False
@@ -787,6 +864,28 @@ def guardar_actuaciones_excel():
 
 def cargar_actuaciones_desde_fuentes():
   acts = []
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    try:
+      acts = storage.read_records("Actuaciones")
+      for actuacion in acts:
+        try:
+          actuacion["id"] = int(actuacion.get("id", 0))
+        except (TypeError, ValueError):
+          actuacion["id"] = 0
+        try:
+          actuacion["sheet_col"] = int(actuacion.get("sheet_col", 0))
+        except (TypeError, ValueError):
+          actuacion["sheet_col"] = actuacion["id"] + 2
+        try:
+          actuacion["fecha"] = datetime.date.fromisoformat(str(actuacion.get("fecha", "")))
+        except ValueError:
+          actuacion["fecha"] = hoy_m
+      return [actuacion for actuacion in acts if actuacion.get("id")]
+    except StorageOperationError:
+      return []
+  if usar_almacenamiento_google():
+    return []
   try:
     if sincronizacion_google_habilitada() and "gcp_service_account" in st.secrets:
       import gspread
@@ -890,7 +989,13 @@ if "actuaciones" not in st.session_state:
 
 # --- CONFESIONARIO PERSISTENTE ---
 if "confesionario_mensajes" not in st.session_state:
-  if os.path.exists(CONFESIONARIO_FILE):
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    try:
+      st.session_state.confesionario_mensajes = storage.read_records("Confesionario")
+    except StorageOperationError:
+      st.session_state.confesionario_mensajes = []
+  elif os.path.exists(CONFESIONARIO_FILE) and not usar_almacenamiento_google():
     try:
       df_conf = pd.read_excel(CONFESIONARIO_FILE)
       st.session_state.confesionario_mensajes = df_conf.to_dict(
@@ -905,6 +1010,12 @@ if "confesionario_mensajes" not in st.session_state:
 def guardar_confesionario_excel():
   try:
     df_conf = pd.DataFrame(st.session_state.confesionario_mensajes)
+    storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+    if storage:
+      storage.replace_records("Confesionario", df_conf.to_dict(orient="records"))
+      return True
+    if usar_almacenamiento_google():
+      return False
     if not guardar_excel_atomico(df_conf, CONFESIONARIO_FILE):
       st.error("No se ha podido guardar el mensaje.")
       return False
@@ -924,7 +1035,22 @@ if "proximo_ensayo" not in st.session_state:
   }
 
 if "gastos" not in st.session_state:
-  if os.path.exists(EXCEL_FILE):
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    try:
+      st.session_state.gastos = pd.DataFrame(storage.read_records("Gastos"))
+      if st.session_state.gastos.empty:
+        st.session_state.gastos = pd.DataFrame(
+            columns=["ID", "Fecha", "Usuario", "Concepto", "Importe", "Fichero", "Reembolsado", "Enlace Ticket", "Drive File ID", "MIME Type"]
+        )
+      else:
+        st.session_state.gastos["ID"] = pd.to_numeric(st.session_state.gastos["ID"], errors="coerce").fillna(0).astype(int)
+        st.session_state.gastos["Importe"] = pd.to_numeric(st.session_state.gastos["Importe"], errors="coerce").fillna(0.0)
+      if "Reembolsado" not in st.session_state.gastos.columns:
+        st.session_state.gastos["Reembolsado"] = "PENDIENTE ABONO"
+    except StorageOperationError:
+      st.session_state.gastos = pd.DataFrame()
+  elif os.path.exists(EXCEL_FILE) and not usar_almacenamiento_google():
     try:
       st.session_state.gastos = pd.read_excel(EXCEL_FILE)
       if "Reembolsado" not in st.session_state.gastos.columns:
@@ -957,7 +1083,14 @@ if "gastos" not in st.session_state:
     )
 
 if "saldo_caja" not in st.session_state:
-  if os.path.exists(SALDO_FILE):
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    try:
+      caja = {item.get("clave"): item.get("valor") for item in storage.read_records("Caja")}
+      st.session_state.saldo_caja = float(caja.get("saldo_caja", 0.0))
+    except (StorageOperationError, TypeError, ValueError):
+      st.session_state.saldo_caja = 0.0
+  elif os.path.exists(SALDO_FILE) and not usar_almacenamiento_google():
     try:
       with open(SALDO_FILE, "r") as f:
         st.session_state.saldo_caja = float(f.read().strip())
@@ -965,6 +1098,32 @@ if "saldo_caja" not in st.session_state:
       st.session_state.saldo_caja = 1250.50
   else:
     st.session_state.saldo_caja = 1250.50
+
+
+def guardar_gastos_persistentes():
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    try:
+      storage.replace_records("Gastos", st.session_state.gastos.to_dict(orient="records"))
+      return True
+    except StorageOperationError:
+      return False
+  if usar_almacenamiento_google():
+    return False
+  return guardar_excel_atomico(st.session_state.gastos, EXCEL_FILE)
+
+
+def guardar_saldo_persistente(usuario):
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if storage:
+    try:
+      storage.replace_records("Caja", [{"clave": "saldo_caja", "valor": st.session_state.saldo_caja}])
+      return True
+    except StorageOperationError:
+      return False
+  if usar_almacenamiento_google():
+    return False
+  return guardar_texto_atomico(st.session_state.saldo_caja, SALDO_FILE)
 
 USER_REQUIRED_COLUMNS = {
     "Nombre",
@@ -981,10 +1140,25 @@ USER_REQUIRED_COLUMNS = {
 
 def cargar_usuarios_seguro():
   """Carga solo el registro v2 con contraseñas hasheadas y roles explícitos."""
-  if not os.path.exists(EXCEL_USUARIOS):
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if usar_almacenamiento_google() and not storage:
     return {}
+  if storage:
+    try:
+      df_u = pd.DataFrame(storage.read_records("Usuarios"))
+      df_u.rename(columns={"telefono": "tel", "fecha_nacimiento": "fnac"}, inplace=True)
+      if "activo" in df_u.columns:
+        df_u = df_u[df_u["activo"].astype(str).str.lower() != "false"]
+    except StorageOperationError:
+      return {}
+  elif not os.path.exists(EXCEL_USUARIOS):
+    return {}
+  else:
+    try:
+      df_u = pd.read_excel(EXCEL_USUARIOS)
+    except Exception:
+      return {}
   try:
-    df_u = pd.read_excel(EXCEL_USUARIOS)
     if not USER_REQUIRED_COLUMNS.issubset(df_u.columns):
       return {}
     usuarios = {}
@@ -1034,6 +1208,15 @@ def guardar_usuarios_excel():
             "rgpd",
         ]
     ]
+    storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+    if storage:
+      records = df_u.to_dict(orient="records")
+      for record in records:
+        record["activo"] = "true"
+      storage.replace_records("Usuarios", records)
+      return True
+    if usar_almacenamiento_google():
+      return False
     temporal = f"{EXCEL_USUARIOS}.tmp.xlsx"
     df_u.to_excel(temporal, index=False)
     os.replace(temporal, EXCEL_USUARIOS)
@@ -1053,10 +1236,22 @@ INVITATION_COLUMNS = [
 
 
 def cargar_invitaciones_seguras():
-  if not os.path.exists(EXCEL_INVITACIONES):
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if usar_almacenamiento_google() and not storage:
     return []
+  if storage:
+    try:
+      df = pd.DataFrame(storage.read_records("Invitaciones"))
+    except StorageOperationError:
+      return []
+  elif not os.path.exists(EXCEL_INVITACIONES):
+    return []
+  else:
+    try:
+      df = pd.read_excel(EXCEL_INVITACIONES)
+    except Exception:
+      return []
   try:
-    df = pd.read_excel(EXCEL_INVITACIONES)
     if not set(INVITATION_COLUMNS).issubset(df.columns):
       return []
     invitaciones = []
@@ -1076,6 +1271,12 @@ def cargar_invitaciones_seguras():
 def guardar_invitaciones_excel():
   try:
     df = pd.DataFrame(st.session_state.invitaciones, columns=INVITATION_COLUMNS)
+    storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+    if storage:
+      storage.replace_records("Invitaciones", df.to_dict(orient="records"))
+      return True
+    if usar_almacenamiento_google():
+      return False
     temporal = f"{EXCEL_INVITACIONES}.tmp.xlsx"
     df.to_excel(temporal, index=False)
     os.replace(temporal, EXCEL_INVITACIONES)
@@ -2057,16 +2258,31 @@ with tab_gastos_app:
           nombre_fichero = (
               f"Gasto_{id_nuevo}_{fecha}_{usuario_actual}_{importe}EUR.{ext}"
           )
-          path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
-
-          with open(path_destino, "wb") as f:
-            f.write(contenido_fichero)
+          path_destino = ""
+          drive_file_id = ""
+          mime_type = {
+              "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf",
+          }[ext]
+          storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+          try:
+            if storage:
+              drive_file_id, enlace_excel = storage.upload_receipt(
+                  nombre_fichero, contenido_fichero, mime_type
+              )
+            elif usar_almacenamiento_google():
+              raise StorageOperationError("La conexión segura con Google no está lista.")
+            else:
+              path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
+              with open(path_destino, "wb") as f:
+                f.write(contenido_fichero)
+              enlace_excel = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
+          except StorageOperationError:
+            st.error("No se ha podido guardar el justificante en Drive. El gasto no se ha registrado.")
+            st.stop()
 
           concepto_final = f"{categoria_seleccionada}" + (
               f" - {detalle_concepto}" if detalle_concepto else ""
           )
-          enlace_excel = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
-
           nuevo_reg = {
               "ID": id_nuevo,
               "Fecha": str(fecha),
@@ -2076,12 +2292,14 @@ with tab_gastos_app:
               "Fichero": nombre_fichero,
               "Reembolsado": "PENDIENTE ABONO",
               "Enlace Ticket": enlace_excel,
+              "Drive File ID": drive_file_id,
+              "MIME Type": mime_type,
           }
           st.session_state.gastos = pd.concat(
               [st.session_state.gastos, pd.DataFrame([nuevo_reg])],
               ignore_index=True,
           )
-          if guardar_excel_atomico(st.session_state.gastos, EXCEL_FILE):
+          if guardar_gastos_persistentes():
             st.success("¡Gasto registrado con éxito!")
             registrar_auditoria("gasto_registrado", usuario_actual, str(id_nuevo))
             st.info(
@@ -2090,7 +2308,8 @@ with tab_gastos_app:
           else:
             st.session_state.gastos = st.session_state.gastos.iloc[:-1]
             try:
-              os.remove(path_destino)
+              if path_destino:
+                os.remove(path_destino)
             except OSError:
               pass
             st.error("No se ha podido guardar el gasto. Inténtalo de nuevo.")
@@ -2143,6 +2362,10 @@ with tab_gastos_app:
 
           fich = row.get("Fichero")
           if fich and isinstance(fich, str) and str(fich) != "nan":
+            enlace_drive = str(row.get("Enlace Ticket", ""))
+            if enlace_drive.startswith("https://"):
+              st.link_button(f"Abrir Ticket (Gasto #{row['ID']})", enlace_drive)
+              continue
             path_fich = os.path.join(RECEIPTS_DIR, fich)
             if os.path.exists(path_fich):
               with st.expander(f"Previsualizar Ticket (Gasto #{row['ID']})"):
@@ -2319,7 +2542,7 @@ with tab_admin_app:
       if btn_actualizar_saldo:
         saldo_anterior = st.session_state.saldo_caja
         st.session_state.saldo_caja = float(nuevo_saldo_input)
-        if guardar_texto_atomico(st.session_state.saldo_caja, SALDO_FILE):
+        if guardar_saldo_persistente(usuario_actual):
           registrar_auditoria("saldo_actualizado", usuario_actual)
           st.success("¡Importe actualizado con éxito!")
           st.rerun()
@@ -2428,7 +2651,7 @@ with tab_admin_app:
             st.session_state.gastos.loc[
                 st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
             ] = "ABONADO"
-            if guardar_excel_atomico(st.session_state.gastos, EXCEL_FILE):
+            if guardar_gastos_persistentes():
               registrar_auditoria("gasto_abonado", usuario_actual, str(prow["ID"]))
               st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
               st.rerun()

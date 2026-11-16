@@ -20,6 +20,15 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
       - name: Ejecutar pruebas automáticas
-        run: python -m unittest discover -s tests -v
+        shell: bash
+        run: |
+          status=0
+          for test in tests/test_*.py; do
+            python "$test" || {
+              echo "::error file=$test,title=Prueba automática fallida::Revisar el resultado de esta prueba."
+              status=1
+            }
+          done
+          exit "$status"
       - name: Verificar sintaxis de la aplicación de pruebas
         run: python -m py_compile app_safara_test.py safara_google_storage.py safara_maintenance.py safara_security.py safara_supabase_storage.py

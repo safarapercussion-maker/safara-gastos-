@@ -1,4 +1,3 @@
-Attempting to perform the InitializeDefaultDrives operation on the 'FileSystem' provider failed.
 create index actuaciones_creado_por_idx on safara.actuaciones (creado_por);
 create index auditoria_usuario_idx on safara.auditoria (usuario_id);
 create index caja_actualizado_por_idx on safara.caja (actualizado_por);

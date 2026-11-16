@@ -1,4 +1,3 @@
-Attempting to perform the InitializeDefaultDrives operation on the 'FileSystem' provider failed.
 """Almacenamiento transaccional de SAFARA GASTOS en Supabase.
 
 Este módulo se usa solo desde el servidor Streamlit. La credencial de base de

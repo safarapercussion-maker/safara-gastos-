@@ -1,4 +1,3 @@
-Attempting to perform the InitializeDefaultDrives operation on the 'FileSystem' provider failed.
 # SAFARA GASTOS 1.0 — Fase 5: base transaccional de pruebas
 
 ## Alcance

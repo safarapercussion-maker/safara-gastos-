@@ -1,4 +1,3 @@
-Attempting to perform the InitializeDefaultDrives operation on the 'FileSystem' provider failed.
 create schema if not exists safara;
 revoke all on schema safara from public;
 revoke all on schema safara from anon, authenticated;

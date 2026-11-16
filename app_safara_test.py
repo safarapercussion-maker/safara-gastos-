@@ -1,3 +1,4 @@
+Attempting to perform the InitializeDefaultDrives operation on the 'FileSystem' provider failed.
 import base64
 import datetime
 import html
@@ -36,6 +37,13 @@ from safara_google_storage import (
     StorageOperationError,
     is_enabled as google_storage_enabled,
     GoogleStorageConfig,
+)
+from safara_supabase_storage import (
+    SupabaseSafaraStorage,
+    SupabaseStorageConfig,
+    SupabaseStorageConfigurationError,
+    SupabaseStorageOperationError,
+    is_enabled as supabase_storage_enabled,
 )
 
 st.set_page_config(
@@ -474,10 +482,29 @@ def sincronizacion_google_habilitada():
 
 _google_storage = None
 _google_storage_error = ""
+_supabase_storage = None
+_supabase_storage_error = ""
 
 
 def obtener_almacenamiento_google():
-  """Devuelve el único almacén autorizado; no usa ni la hoja histórica ni credenciales en código."""
+  """Devuelve el almacén autorizado, priorizando Supabase para datos transaccionales."""
+  global _google_storage, _google_storage_error, _supabase_storage, _supabase_storage_error
+  if supabase_storage_enabled(st.secrets):
+    if _supabase_storage is not None:
+      return _supabase_storage
+    if _supabase_storage_error:
+      return None
+    try:
+      _supabase_storage = SupabaseSafaraStorage(SupabaseStorageConfig.from_secrets(st.secrets))
+      return _supabase_storage
+    except SupabaseStorageConfigurationError as error:
+      _supabase_storage_error = str(error)
+      return None
+  return obtener_almacenamiento_drive()
+
+
+def obtener_almacenamiento_drive():
+  """Devuelve Google Drive únicamente para justificantes; nunca para datos críticos."""
   global _google_storage, _google_storage_error
   if not google_storage_enabled(st.secrets):
     return None
@@ -495,8 +522,12 @@ def obtener_almacenamiento_google():
 
 
 def usar_almacenamiento_google():
-  """Indica que Google se activó y evita escribir una copia local que desaparecería al reiniciar."""
-  return google_storage_enabled(st.secrets)
+  """Indica que hay persistencia remota autorizada y evita archivos efímeros."""
+  return supabase_storage_enabled(st.secrets) or google_storage_enabled(st.secrets)
+
+
+def usar_almacenamiento_supabase(storage=None):
+  return isinstance(storage or obtener_almacenamiento_google(), SupabaseSafaraStorage)
 
 
 def guardar_excel_atomico(dataframe, destino):
@@ -557,7 +588,7 @@ if "votos_historial" not in st.session_state:
           storage.read_records("Votos"),
           columns=["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"],
       )
-    except StorageOperationError:
+    except (StorageOperationError, SupabaseStorageOperationError):
       st.session_state.votos_historial = pd.DataFrame(
           columns=["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"]
       )
@@ -589,11 +620,13 @@ if "votos_historial" not in st.session_state:
 def guardar_votos_persistentes():
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
+    if usar_almacenamiento_supabase(storage):
+      return True
     try:
       storage.replace_records("Votos", st.session_state.votos_historial.to_dict(orient="records"))
       return True
-    except StorageOperationError:
-      st.error("No se han podido guardar los votos en Google. Inténtalo de nuevo.")
+    except (StorageOperationError, SupabaseStorageOperationError):
+      st.error("No se han podido guardar los votos. Inténtalo de nuevo.")
       registrar_auditoria("error_guardado_votos")
       return False
   if usar_almacenamiento_google():
@@ -778,6 +811,14 @@ def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
       "BOLO_PERMANENTE" if str(encuesta_id).startswith("bolo_") else ciclo_actual
   )
 
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if usar_almacenamiento_supabase(storage):
+    try:
+      storage.guardar_voto(str(encuesta_id), str(ciclo_target), str(usuario_id), str(respuesta))
+    except SupabaseStorageOperationError:
+      st.error("No se ha podido guardar tu respuesta. Inténtalo de nuevo.")
+      return False
+
   cond = (
       (df["encuesta_id"] == str(encuesta_id))
       & (df["ciclo_id"] == str(ciclo_target))
@@ -849,6 +890,8 @@ def guardar_actuaciones_excel():
       )
     storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
     if storage:
+      if usar_almacenamiento_supabase(storage):
+        return True
       storage.replace_records("Actuaciones", df_act.to_dict(orient="records"))
       return True
     if usar_almacenamiento_google():
@@ -882,7 +925,7 @@ def cargar_actuaciones_desde_fuentes():
         except ValueError:
           actuacion["fecha"] = hoy_m
       return [actuacion for actuacion in acts if actuacion.get("id")]
-    except StorageOperationError:
+    except (StorageOperationError, SupabaseStorageOperationError):
       return []
   if usar_almacenamiento_google():
     return []
@@ -993,7 +1036,7 @@ if "confesionario_mensajes" not in st.session_state:
   if storage:
     try:
       st.session_state.confesionario_mensajes = storage.read_records("Confesionario")
-    except StorageOperationError:
+    except (StorageOperationError, SupabaseStorageOperationError):
       st.session_state.confesionario_mensajes = []
   elif os.path.exists(CONFESIONARIO_FILE) and not usar_almacenamiento_google():
     try:
@@ -1048,7 +1091,7 @@ if "gastos" not in st.session_state:
         st.session_state.gastos["Importe"] = pd.to_numeric(st.session_state.gastos["Importe"], errors="coerce").fillna(0.0)
       if "Reembolsado" not in st.session_state.gastos.columns:
         st.session_state.gastos["Reembolsado"] = "PENDIENTE ABONO"
-    except StorageOperationError:
+    except (StorageOperationError, SupabaseStorageOperationError):
       st.session_state.gastos = pd.DataFrame()
   elif os.path.exists(EXCEL_FILE) and not usar_almacenamiento_google():
     try:
@@ -1088,7 +1131,7 @@ if "saldo_caja" not in st.session_state:
     try:
       caja = {item.get("clave"): item.get("valor") for item in storage.read_records("Caja")}
       st.session_state.saldo_caja = float(caja.get("saldo_caja", 0.0))
-    except (StorageOperationError, TypeError, ValueError):
+    except (StorageOperationError, SupabaseStorageOperationError, TypeError, ValueError):
       st.session_state.saldo_caja = 0.0
   elif os.path.exists(SALDO_FILE) and not usar_almacenamiento_google():
     try:
@@ -1103,10 +1146,12 @@ if "saldo_caja" not in st.session_state:
 def guardar_gastos_persistentes():
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
+    if usar_almacenamiento_supabase(storage):
+      return True
     try:
       storage.replace_records("Gastos", st.session_state.gastos.to_dict(orient="records"))
       return True
-    except StorageOperationError:
+    except (StorageOperationError, SupabaseStorageOperationError):
       return False
   if usar_almacenamiento_google():
     return False
@@ -1116,10 +1161,15 @@ def guardar_gastos_persistentes():
 def guardar_saldo_persistente(usuario):
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
+    if usar_almacenamiento_supabase(storage):
+      try:
+        return storage.actualizar_saldo(float(st.session_state.saldo_caja), usuario)
+      except SupabaseStorageOperationError:
+        return False
     try:
       storage.replace_records("Caja", [{"clave": "saldo_caja", "valor": st.session_state.saldo_caja}])
       return True
-    except StorageOperationError:
+    except (StorageOperationError, SupabaseStorageOperationError):
       return False
   if usar_almacenamiento_google():
     return False
@@ -1149,7 +1199,7 @@ def cargar_usuarios_seguro():
       df_u.rename(columns={"telefono": "tel", "fecha_nacimiento": "fnac"}, inplace=True)
       if "activo" in df_u.columns:
         df_u = df_u[df_u["activo"].astype(str).str.lower() != "false"]
-    except StorageOperationError:
+    except (StorageOperationError, SupabaseStorageOperationError):
       return {}
   elif not os.path.exists(EXCEL_USUARIOS):
     return {}
@@ -1242,7 +1292,7 @@ def cargar_invitaciones_seguras():
   if storage:
     try:
       df = pd.DataFrame(storage.read_records("Invitaciones"))
-    except StorageOperationError:
+    except (StorageOperationError, SupabaseStorageOperationError):
       return []
   elif not os.path.exists(EXCEL_INVITACIONES):
     return []
@@ -1296,6 +1346,14 @@ def crear_invitacion(usuario_admin, dias_validez):
       "usado_por": "",
       "usado_en": "",
   }
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if usar_almacenamiento_supabase(storage):
+    try:
+      storage.crear_invitacion(registro["codigo_hash"], usuario_admin, registro["caduca_en"])
+      st.session_state.invitaciones.append(registro)
+      return codigo
+    except SupabaseStorageOperationError:
+      return None
   st.session_state.invitaciones.append(registro)
   if guardar_invitaciones_excel():
     return codigo
@@ -1563,7 +1621,7 @@ if not st.session_state.usuario_autenticado:
           st.error(
               "No se ha podido verificar la configuración inicial. Revisa el secreto de Streamlit."
           )
-        elif not primer_usuario and not invitacion_valida(codigo_invitacion):
+        elif not primer_usuario and not usar_almacenamiento_supabase() and not invitacion_valida(codigo_invitacion):
           st.error("El código de invitación no es válido, ya se ha usado o ha caducado.")
         else:
           fecha_nac_str = f"{reg_dia:02d}/{reg_mes:02d}/{reg_anio}"
@@ -1578,19 +1636,34 @@ if not st.session_state.usuario_autenticado:
               "instrumento": reg_instrumento,
               "rgpd": True,
           }
-          st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
-          if not guardar_usuarios_excel():
-            del st.session_state.usuarios_registrados[nombre_limpio]
-            st.error("No se ha podido guardar el alta. Inténtalo de nuevo.")
-          elif not primer_usuario and not consumir_invitacion(
-              codigo_invitacion, nombre_limpio
-          ):
-            del st.session_state.usuarios_registrados[nombre_limpio]
-            guardar_usuarios_excel()
-            st.error("No se ha podido confirmar el código. Inténtalo de nuevo.")
+          storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+          if usar_almacenamiento_supabase(storage):
+            try:
+              alta_guardada = storage.registrar_usuario(
+                  nombre_limpio, nuevo_usuario, codigo_invitacion
+              )
+            except SupabaseStorageOperationError:
+              alta_guardada = False
+            if not alta_guardada:
+              st.error("El código de invitación no es válido, ya se ha usado o ha caducado.")
+            else:
+              st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
+              registrar_auditoria("alta_usuario", nombre_limpio, nuevo_usuario["rol"])
+              st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
           else:
-            registrar_auditoria("alta_usuario", nombre_limpio, nuevo_usuario["rol"])
-            st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
+            st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
+            if not guardar_usuarios_excel():
+              del st.session_state.usuarios_registrados[nombre_limpio]
+              st.error("No se ha podido guardar el alta. Inténtalo de nuevo.")
+            elif not primer_usuario and not consumir_invitacion(
+                codigo_invitacion, nombre_limpio
+            ):
+              del st.session_state.usuarios_registrados[nombre_limpio]
+              guardar_usuarios_excel()
+              st.error("No se ha podido confirmar el código. Inténtalo de nuevo.")
+            else:
+              registrar_auditoria("alta_usuario", nombre_limpio, nuevo_usuario["rol"])
+              st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
     st.markdown("</div>", unsafe_allow_html=True)
 
   st.stop()
@@ -1965,12 +2038,25 @@ with tab_movidas:
             "usuario": usuario_actual,
             "mensaje": confesion_txt.strip(),
         }
-        st.session_state.confesionario_mensajes.append(nuevo_msg)
-        if guardar_confesionario_excel():
+        storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+        if usar_almacenamiento_supabase(storage):
+          try:
+            storage.guardar_confesion(usuario_actual, confesion_txt.strip())
+            confesion_guardada = True
+          except SupabaseStorageOperationError:
+            confesion_guardada = False
+        else:
+          st.session_state.confesionario_mensajes.append(nuevo_msg)
+          confesion_guardada = guardar_confesionario_excel()
+        if confesion_guardada:
+          if usar_almacenamiento_supabase(storage):
+            st.session_state.confesionario_mensajes.append(nuevo_msg)
           registrar_auditoria("mensaje_confesionario", usuario_actual)
           st.success("¡Mensaje guardado con éxito en el confesionario!")
         else:
-          st.session_state.confesionario_mensajes.pop()
+          if not usar_almacenamiento_supabase(storage):
+            st.session_state.confesionario_mensajes.pop()
+          st.error("No se ha podido guardar tu mensaje. Inténtalo de nuevo.")
       else:
         st.error("Por favor, escribe un mensaje antes de enviar.")
 
@@ -2264,19 +2350,20 @@ with tab_gastos_app:
               "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf",
           }[ext]
           storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+          almacenamiento_drive = obtener_almacenamiento_drive() if google_storage_enabled(st.secrets) else None
           try:
-            if storage:
-              drive_file_id, enlace_excel = storage.upload_receipt(
+            if almacenamiento_drive:
+              drive_file_id, enlace_excel = almacenamiento_drive.upload_receipt(
                   nombre_fichero, contenido_fichero, mime_type
               )
-            elif usar_almacenamiento_google():
+            elif supabase_storage_enabled(st.secrets) or usar_almacenamiento_google():
               raise StorageOperationError("La conexión segura con Google no está lista.")
             else:
               path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
               with open(path_destino, "wb") as f:
                 f.write(contenido_fichero)
               enlace_excel = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
-          except StorageOperationError:
+          except (StorageOperationError, SupabaseStorageOperationError):
             st.error("No se ha podido guardar el justificante en Drive. El gasto no se ha registrado.")
             st.stop()
 
@@ -2295,18 +2382,31 @@ with tab_gastos_app:
               "Drive File ID": drive_file_id,
               "MIME Type": mime_type,
           }
-          st.session_state.gastos = pd.concat(
-              [st.session_state.gastos, pd.DataFrame([nuevo_reg])],
-              ignore_index=True,
-          )
-          if guardar_gastos_persistentes():
+          if usar_almacenamiento_supabase(storage):
+            try:
+              nuevo_reg = storage.crear_gasto(nuevo_reg)
+              gasto_guardado = True
+            except SupabaseStorageOperationError:
+              gasto_guardado = False
+          else:
+            st.session_state.gastos = pd.concat(
+                [st.session_state.gastos, pd.DataFrame([nuevo_reg])],
+                ignore_index=True,
+            )
+            gasto_guardado = guardar_gastos_persistentes()
+          if gasto_guardado:
+            if usar_almacenamiento_supabase(storage):
+              st.session_state.gastos = pd.concat(
+                  [st.session_state.gastos, pd.DataFrame([nuevo_reg])], ignore_index=True,
+              )
             st.success("¡Gasto registrado con éxito!")
             registrar_auditoria("gasto_registrado", usuario_actual, str(id_nuevo))
             st.info(
                 "El gasto queda pendiente de revisión en el panel de administración."
             )
           else:
-            st.session_state.gastos = st.session_state.gastos.iloc[:-1]
+            if not usar_almacenamiento_supabase(storage):
+              st.session_state.gastos = st.session_state.gastos.iloc[:-1]
             try:
               if path_destino:
                 os.remove(path_destino)
@@ -2440,40 +2540,49 @@ with tab_admin_app:
           if duplicado:
             st.warning("Ya existe una actuación registrada con este mismo título y fecha.")
           else:
-            sincronizacion_activa = sincronizacion_google_habilitada()
-            sheet_col_asignado = (
-                sincronizar_bolo_en_sheets(b_tit, b_fec, b_hor, b_lug, b_est)
-                if sincronizacion_activa
-                else None
-            )
-            nuevo_id_act = (
-                max([a["id"] for a in st.session_state.actuaciones], default=0) + 1
-            )
-            if not sincronizacion_activa:
-              sheet_col_asignado = nuevo_id_act + 2
-            if sheet_col_asignado is not None:
-              st.session_state.actuaciones.append({
-                  "id": nuevo_id_act,
-                  "titulo": b_tit,
-                  "fecha": b_fec,
-                  "hora": b_hor,
-                  "lugar": b_lug,
-                  "estado": b_est,
-                  "sheet_col": sheet_col_asignado,
-              })
-              if guardar_actuaciones_excel():
-                mensaje = (
-                    "🎉 ¡Bolo procesado y creado con éxito (sincronizado en Google Sheets)!"
-                    if sincronizacion_activa
-                    else "🎉 ¡Bolo creado y guardado localmente!"
-                )
-                st.success(mensaje)
+            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+            if usar_almacenamiento_supabase(storage):
+              try:
+                nueva_actuacion = storage.crear_actuacion({
+                    "titulo": b_tit, "fecha": b_fec, "hora": b_hor,
+                    "lugar": b_lug, "estado": b_est,
+                }, usuario_actual)
+              except SupabaseStorageOperationError:
+                nueva_actuacion = None
+              if nueva_actuacion is None:
+                st.error("No se ha podido guardar la actuación.")
+              else:
+                st.session_state.actuaciones.append(nueva_actuacion)
+                st.success("🎉 ¡Bolo creado y guardado con seguridad!")
                 registrar_auditoria("actuacion_creada", usuario_actual, b_tit)
                 st.rerun()
-              else:
-                st.error("No se ha podido guardar la actuación.")
             else:
-              st.error("No se pudo sincronizar con Google Sheets. Comprueba la conexión y credenciales.")
+              sincronizacion_activa = sincronizacion_google_habilitada()
+              sheet_col_asignado = (
+                  sincronizar_bolo_en_sheets(b_tit, b_fec, b_hor, b_lug, b_est)
+                  if sincronizacion_activa else None
+              )
+              nuevo_id_act = max([a["id"] for a in st.session_state.actuaciones], default=0) + 1
+              if not sincronizacion_activa:
+                sheet_col_asignado = nuevo_id_act + 2
+              if sheet_col_asignado is not None:
+                st.session_state.actuaciones.append({
+                    "id": nuevo_id_act, "titulo": b_tit, "fecha": b_fec, "hora": b_hor,
+                    "lugar": b_lug, "estado": b_est, "sheet_col": sheet_col_asignado,
+                })
+                if guardar_actuaciones_excel():
+                  mensaje = (
+                      "🎉 ¡Bolo procesado y creado con éxito (sincronizado en Google Sheets)!"
+                      if sincronizacion_activa
+                      else "🎉 ¡Bolo creado y guardado localmente!"
+                  )
+                  st.success(mensaje)
+                  registrar_auditoria("actuacion_creada", usuario_actual, b_tit)
+                  st.rerun()
+                else:
+                  st.error("No se ha podido guardar la actuación.")
+              else:
+                st.error("No se pudo sincronizar con Google Sheets. Comprueba la conexión y credenciales.")
 
     st.markdown("---")
 
@@ -2495,6 +2604,15 @@ with tab_admin_app:
       col_a1, col_a2 = st.columns(2)
       with col_a1:
         if st.button("🚫 Marcar como ANULADA"):
+          storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+          if usar_almacenamiento_supabase(storage):
+            try:
+              actualizado = storage.cambiar_estado_actuacion(id_sel, "ANULADA")
+            except SupabaseStorageOperationError:
+              actualizado = False
+            if not actualizado:
+              st.error("No se ha podido actualizar la actuación.")
+              st.stop()
           sheet_col_target = None
           for a in st.session_state.actuaciones:
             if a["id"] == id_sel:
@@ -2511,6 +2629,15 @@ with tab_admin_app:
 
       with col_a2:
         if st.button("🗑️ Eliminar Definitivamente"):
+          storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+          if usar_almacenamiento_supabase(storage):
+            try:
+              eliminado = storage.eliminar_actuacion(id_sel)
+            except SupabaseStorageOperationError:
+              eliminado = False
+            if not eliminado:
+              st.error("No se ha podido eliminar la actuación.")
+              st.stop()
           sheet_col_target = None
           for a in st.session_state.actuaciones:
             if a["id"] == id_sel:
@@ -2614,7 +2741,15 @@ with tab_admin_app:
           usuario_eliminado = st.session_state.usuarios_registrados.pop(
               socio_a_borrar
           )
-          if guardar_usuarios_excel():
+          storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+          if usar_almacenamiento_supabase(storage):
+            try:
+              usuario_guardado = storage.desactivar_usuario(socio_a_borrar)
+            except SupabaseStorageOperationError:
+              usuario_guardado = False
+          else:
+            usuario_guardado = guardar_usuarios_excel()
+          if usuario_guardado:
             st.success(f"Usuario '{socio_a_borrar}' eliminado correctamente.")
             st.rerun()
           else:
@@ -2651,7 +2786,15 @@ with tab_admin_app:
             st.session_state.gastos.loc[
                 st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
             ] = "ABONADO"
-            if guardar_gastos_persistentes():
+            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+            if usar_almacenamiento_supabase(storage):
+              try:
+                gasto_guardado = storage.marcar_gasto_abonado(int(prow["ID"]), usuario_actual)
+              except SupabaseStorageOperationError:
+                gasto_guardado = False
+            else:
+              gasto_guardado = guardar_gastos_persistentes()
+            if gasto_guardado:
               registrar_auditoria("gasto_abonado", usuario_actual, str(prow["ID"]))
               st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
               st.rerun()
@@ -2715,3 +2858,4 @@ if logo_delante_file:
 st.markdown(
     '<div class="somos-fuego-footer">SOMOS FUEGO</div>', unsafe_allow_html=True
 )
+

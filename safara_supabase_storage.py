@@ -22,6 +22,10 @@ class SupabaseStorageOperationError(RuntimeError):
     """Una operación transaccional no se pudo completar."""
 
 
+class SupabaseStorageAuthenticationError(SupabaseStorageOperationError):
+    """La contraseña configurada no permite abrir la conexión privada."""
+
+
 def is_enabled(secrets: Any) -> bool:
     try:
         value = secrets.get("enable_supabase_storage", False)
@@ -66,6 +70,7 @@ class SupabaseSafaraStorage:
                 "Falta la dependencia segura de PostgreSQL."
             ) from error
         self._database_url = config.database_url
+        self._connection_failure: SupabaseStorageOperationError | None = None
 
     def _connect(self):
         import psycopg
@@ -75,6 +80,7 @@ class SupabaseSafaraStorage:
             self._database_url,
             row_factory=dict_row,
             connect_timeout=10,
+            sslmode="require",
             options="-c search_path=safara,public",
         )
 
@@ -93,6 +99,8 @@ class SupabaseSafaraStorage:
             return dt.datetime.strptime(raw, "%d/%m/%Y").date()
 
     def _run(self, callback):
+        if self._connection_failure is not None:
+            raise self._connection_failure
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
@@ -100,9 +108,19 @@ class SupabaseSafaraStorage:
         except SupabaseStorageOperationError:
             raise
         except Exception as error:
-            raise SupabaseStorageOperationError(
-                "No se ha podido guardar la información en Supabase."
-            ) from error
+            if "password authentication failed" in str(error).lower():
+                failure = SupabaseStorageAuthenticationError(
+                    "La contraseña de la conexión privada de Supabase no coincide."
+                )
+            else:
+                failure = SupabaseStorageOperationError(
+                    "No se ha podido guardar la información en Supabase."
+                )
+            # En una configuración errónea, evita abrir decenas de conexiones en
+            # un mismo arranque. Al guardar Secrets, Streamlit reinicia la app y
+            # la conexión vuelve a comprobarse con la credencial nueva.
+            self._connection_failure = failure
+            raise failure from error
 
     def _user_id(self, cursor, nombre: str):
         cursor.execute(

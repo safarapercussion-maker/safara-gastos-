@@ -6,6 +6,7 @@
 2. Recargar la aplicación.
 3. Confirmar que la primera alta se identifica como inicial cuando la tabla segura no contiene usuarios.
 4. Si la conexión a la base fallase, confirmar que aparece un aviso de conexión y no un mensaje incorrecto sobre el código de invitación.
+5. Con una contraseña privada incorrecta, confirmar que la aplicación informa de ello sin repetir conexiones hasta que Streamlit se reinicie tras guardar la credencial correcta.
 
 ## Comprobaciones automáticas incluidas
 

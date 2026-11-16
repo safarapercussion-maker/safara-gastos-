@@ -39,6 +39,7 @@ from safara_google_storage import (
 )
 from safara_supabase_storage import (
     SupabaseSafaraStorage,
+    SupabaseStorageAuthenticationError,
     SupabaseStorageConfig,
     SupabaseStorageConfigurationError,
     SupabaseStorageOperationError,
@@ -1693,13 +1694,20 @@ if not st.session_state.usuario_autenticado:
               alta_guardada = storage.registrar_usuario(
                   nombre_limpio, nuevo_usuario, codigo_invitacion
               )
+            except SupabaseStorageAuthenticationError:
+              alta_guardada = None
+              mensaje_error_conexion = (
+                  "La contraseña privada de Supabase no coincide. No se ha creado "
+                  "el alta; actualiza la conexión en Streamlit Secrets."
+              )
             except SupabaseStorageOperationError:
               alta_guardada = None
-            if alta_guardada is None:
-              st.error(
+              mensaje_error_conexion = (
                   "No se ha podido conectar con la base segura. No se ha creado "
                   "el alta; revisa la conexión privada."
               )
+            if alta_guardada is None:
+              st.error(mensaje_error_conexion)
             elif not alta_guardada:
               st.error("El código de invitación no es válido, ya se ha usado o ha caducado.")
             else:

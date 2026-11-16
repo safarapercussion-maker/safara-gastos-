@@ -22,13 +22,13 @@ jobs:
       - name: Ejecutar pruebas automáticas
         shell: bash
         run: |
-          status=0
-          for test in tests/test_*.py; do
-            python "$test" || {
-              echo "::error file=$test,title=Prueba automática fallida::Revisar el resultado de esta prueba."
-              status=1
-            }
-          done
+          set +e
+          python -m unittest discover -s tests -v 2>&1 | tee test-output.txt
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            details=$(tail -n 30 test-output.txt | tr '\n' '|')
+            echo "::error file=tests,title=Pruebas automáticas fallidas::$details"
+          fi
           exit "$status"
       - name: Verificar sintaxis de la aplicación de pruebas
         run: python -m py_compile app_safara_test.py safara_google_storage.py safara_maintenance.py safara_security.py safara_supabase_storage.py

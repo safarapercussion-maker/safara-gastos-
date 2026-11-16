@@ -1,0 +1,25 @@
+name: Validación técnica SAFARA pruebas
+
+on:
+  push:
+    branches:
+      - safara-security-test
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Ejecutar pruebas automáticas
+        run: python -m unittest discover -s tests -v
+      - name: Verificar sintaxis de la aplicación de pruebas
+        run: python -m py_compile app_safara_test.py safara_google_storage.py safara_maintenance.py safara_security.py safara_supabase_storage.py

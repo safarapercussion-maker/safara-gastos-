@@ -1,4 +1,3 @@
-Attempting to perform the InitializeDefaultDrives operation on the 'FileSystem' provider failed.
 import base64
 import datetime
 import html
@@ -45,6 +44,7 @@ from safara_supabase_storage import (
     SupabaseStorageOperationError,
     is_enabled as supabase_storage_enabled,
 )
+from safara_maintenance import run_google_maintenance
 
 st.set_page_config(
     page_title="Safara Percussion - App Oficial",
@@ -514,7 +514,11 @@ def obtener_almacenamiento_drive():
     return None
   try:
     _google_storage = GoogleSafaraStorage(GoogleStorageConfig.from_secrets(st.secrets))
-    _google_storage.ensure_schema()
+    # Las pestañas antiguas solo pertenecen al modo legado de Google como
+    # almacenamiento. Con Supabase activo, Sheets recibe exclusivamente el
+    # informe reducido y seguro definido por la integración de mantenimiento.
+    if not supabase_storage_enabled(st.secrets):
+      _google_storage.ensure_schema()
     return _google_storage
   except StorageConfigurationError as error:
     _google_storage_error = str(error)
@@ -528,6 +532,20 @@ def usar_almacenamiento_google():
 
 def usar_almacenamiento_supabase(storage=None):
   return isinstance(storage or obtener_almacenamiento_google(), SupabaseSafaraStorage)
+
+
+def actualizar_informes_y_copias_en_segundo_plano():
+  """No bloquea el uso de la app si Google no está disponible temporalmente."""
+  if not supabase_storage_enabled(st.secrets):
+    return
+  database = obtener_almacenamiento_google()
+  if not usar_almacenamiento_supabase(database):
+    return
+  google = obtener_almacenamiento_drive()
+  run_google_maintenance(database, google)
+
+
+actualizar_informes_y_copias_en_segundo_plano()
 
 
 def guardar_excel_atomico(dataframe, destino):
@@ -2407,6 +2425,8 @@ with tab_gastos_app:
           else:
             if not usar_almacenamiento_supabase(storage):
               st.session_state.gastos = st.session_state.gastos.iloc[:-1]
+            if drive_file_id and almacenamiento_drive:
+              almacenamiento_drive.delete_uploaded_file(drive_file_id)
             try:
               if path_destino:
                 os.remove(path_destino)

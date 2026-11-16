@@ -41,6 +41,18 @@ SHEET_SCHEMA: dict[str, list[str]] = {
     "Auditoria": ["fecha_hora", "evento", "usuario", "detalle"],
 }
 
+# Estas pestañas son un informe de consulta, nunca la fuente de datos.
+# Se excluyen contraseñas, hashes, fecha de nacimiento, teléfonos y códigos.
+REPORT_SCHEMA: dict[str, list[str]] = {
+    "Informe Socios": ["Nombre", "Rol", "Instrumento", "Activo desde"],
+    "Informe Invitaciones": ["Emitida por", "Creada", "Caduca", "Usada por", "Usada el"],
+    "Informe Votos": ["Encuesta", "Ciclo", "Persona", "Respuesta", "Actualizado"],
+    "Informe Actuaciones": ["ID", "Título", "Fecha", "Hora", "Lugar", "Estado"],
+    "Informe Gastos": ["ID", "Fecha", "Persona", "Concepto", "Importe", "Estado", "Ticket"],
+    "Informe Caja": ["Concepto", "Importe", "Actualizado"],
+    "Informe Sincronización": ["Estado", "Última actualización", "Origen"],
+}
+
 _GOOGLE_ID = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 
 
@@ -209,6 +221,68 @@ class GoogleSafaraStorage:
             return str(file_data["id"]), str(file_data.get("webViewLink", ""))
         except Exception as error:
             raise StorageOperationError("No se ha podido guardar el justificante en Drive.") from error
+
+    def delete_uploaded_file(self, file_id: str) -> None:
+        """Elimina un ticket recién subido cuando falla el registro económico asociado."""
+        if not file_id:
+            return
+        try:
+            self._drive.files().delete(fileId=file_id).execute()
+        except Exception:
+            # No ocultamos el fallo económico original. La copia queda identificable
+            # en Drive para que administración pueda revisarla si fuese necesario.
+            return
+
+    def write_report_snapshot(self, reports: dict[str, Iterable[dict[str, Any]]]) -> None:
+        """Actualiza solo las pestañas de informe sin exponer datos sensibles."""
+        try:
+            for sheet_name, headers in REPORT_SCHEMA.items():
+                try:
+                    worksheet = self._spreadsheet.worksheet(sheet_name)
+                except Exception:
+                    worksheet = self._spreadsheet.add_worksheet(
+                        title=sheet_name, rows=100, cols=max(8, len(headers))
+                    )
+                rows = [headers]
+                for record in reports.get(sheet_name, []):
+                    rows.append([self._cell_value(record.get(header, "")) for header in headers])
+                worksheet.clear()
+                worksheet.update("A1", rows, value_input_option="RAW")
+        except Exception as error:
+            raise StorageOperationError("No se ha podido actualizar el informe de Google Sheets.") from error
+
+    def upload_backup(self, filename: str, content: bytes) -> str:
+        """Guarda una copia técnica en una subcarpeta separada de los tickets."""
+        try:
+            from googleapiclient.http import MediaIoBaseUpload
+
+            query = (
+                "name = 'SAFARA_GASTOS_COPIAS' and "
+                "mimeType = 'application/vnd.google-apps.folder' and "
+                f"'{self._folder_id}' in parents and trashed = false"
+            )
+            found = self._drive.files().list(q=query, fields="files(id)").execute().get("files", [])
+            if found:
+                backup_folder_id = found[0]["id"]
+            else:
+                folder = self._drive.files().create(
+                    body={
+                        "name": "SAFARA_GASTOS_COPIAS",
+                        "mimeType": "application/vnd.google-apps.folder",
+                        "parents": [self._folder_id],
+                    },
+                    fields="id",
+                ).execute()
+                backup_folder_id = folder["id"]
+            media = MediaIoBaseUpload(io.BytesIO(content), mimetype="application/zip", resumable=False)
+            created = self._drive.files().create(
+                body={"name": filename, "parents": [backup_folder_id]},
+                media_body=media,
+                fields="id",
+            ).execute()
+            return str(created["id"])
+        except Exception as error:
+            raise StorageOperationError("No se ha podido guardar la copia de seguridad en Drive.") from error
 
     @staticmethod
     def _cell_value(value: Any) -> str | int | float:

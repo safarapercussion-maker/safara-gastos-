@@ -1,0 +1,25 @@
+# SAFARA GASTOS 1.0 — Fase 6: continuidad e informes seguros
+
+## Alcance
+
+Esta fase refuerza exclusivamente el entorno de pruebas. No modifica `app.py`, no altera la apariencia de la aplicación y no activa ninguna conexión externa por sí misma.
+
+## Cambios funcionales
+
+- Supabase se mantiene como registro principal de usuarios, invitaciones, votaciones, actuaciones, gastos, caja y auditoría.
+- Google Sheets recibe una vista de consulta independiente, solo cuando Supabase esté activado y haya cambios pendientes.
+- El informe de Sheets excluye contraseñas, hashes, teléfonos, fechas de nacimiento y códigos de invitación.
+- Google Drive conserva los tickets originales y recibe copias administrativas en una subcarpeta separada.
+- Si una subida de ticket llega a Drive pero falla el alta económica correspondiente, la aplicación intenta retirar ese archivo para no dejar un justificante sin registro.
+- La sincronización de informes y las copias se ejecutan sin bloquear una votación, un gasto o cualquier otra acción de las personas usuarias.
+- Se prepara una comprobación diaria para activarla cuando esta arquitectura se apruebe en la rama definitiva; mientras tanto puede ejecutarse manualmente en pruebas.
+
+## Límites explícitos
+
+- Google Sheets es un informe de consulta, no una vía para editar la aplicación. Los cambios manuales allí no se trasladan a Supabase y podrán ser sustituidos por la siguiente actualización.
+- Las copias contienen gastos, caja y actuaciones; los tickets originales permanecen en Drive. No se incluyen mensajes privados ni datos personales innecesarios.
+- La comprobación automática reduce el riesgo de pausa por inactividad en servicios gratuitos, pero no sustituye un servicio de disponibilidad garantizada.
+
+## Activación pendiente y controlada
+
+Cuando las pruebas de esta fase estén aprobadas, habrá una única acción manual: completar el secreto privado de conexión de Supabase en Streamlit y activar su uso. Esa conexión no se copia en GitHub ni se comparte por chat.

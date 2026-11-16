@@ -1,5 +1,12 @@
 # Pruebas — Fase 6: continuidad e informes seguros
 
+## Aislamiento de almacenamiento
+
+1. Activar Supabase desde una sesión que antes hubiese usado Google o archivos locales.
+2. Recargar la aplicación.
+3. Confirmar que la primera alta se identifica como inicial cuando la tabla segura no contiene usuarios.
+4. Si la conexión a la base fallase, confirmar que aparece un aviso de conexión y no un mensaje incorrecto sobre el código de invitación.
+
 ## Comprobaciones automáticas incluidas
 
 - Las columnas de los informes de Google no incluyen campos sensibles.

@@ -548,6 +548,39 @@ def actualizar_informes_y_copias_en_segundo_plano():
 actualizar_informes_y_copias_en_segundo_plano()
 
 
+def reiniciar_estado_si_cambia_backend():
+  """Evita reutilizar en la sesión datos de un almacenamiento anterior."""
+  if supabase_storage_enabled(st.secrets):
+    backend_actual = "supabase"
+  elif google_storage_enabled(st.secrets):
+    backend_actual = "google"
+  else:
+    backend_actual = "local"
+
+  if st.session_state.get("_safara_backend_persistencia") == backend_actual:
+    return
+
+  for clave in (
+      "votos_historial",
+      "actuaciones",
+      "confesionario_mensajes",
+      "gastos",
+      "saldo_caja",
+      "usuarios_registrados",
+      "invitaciones",
+      "usuario_autenticado",
+      "ultimo_acceso",
+      "fallos_acceso",
+      "bloqueado_hasta",
+      "mostrar_recuperacion",
+  ):
+    st.session_state.pop(clave, None)
+  st.session_state["_safara_backend_persistencia"] = backend_actual
+
+
+reiniciar_estado_si_cambia_backend()
+
+
 def guardar_excel_atomico(dataframe, destino):
   """Evita dejar un Excel incompleto si la escritura se interrumpe."""
   temporal = f"{destino}.tmp.xlsx"
@@ -1661,8 +1694,13 @@ if not st.session_state.usuario_autenticado:
                   nombre_limpio, nuevo_usuario, codigo_invitacion
               )
             except SupabaseStorageOperationError:
-              alta_guardada = False
-            if not alta_guardada:
+              alta_guardada = None
+            if alta_guardada is None:
+              st.error(
+                  "No se ha podido conectar con la base segura. No se ha creado "
+                  "el alta; revisa la conexión privada."
+              )
+            elif not alta_guardada:
               st.error("El código de invitación no es válido, ya se ha usado o ha caducado.")
             else:
               st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario

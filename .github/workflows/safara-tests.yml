@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - safara-security-test
+      - safara-test-seguridad
   workflow_dispatch:
 
 permissions:

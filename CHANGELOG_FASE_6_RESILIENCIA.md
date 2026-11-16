@@ -1,5 +1,10 @@
 # SAFARA GASTOS 1.0 — Fase 6: continuidad e informes seguros
 
+## Corrección complementaria de pruebas
+
+- La sesión se reinicia automáticamente al cambiar entre almacenamiento local, Google y Supabase. De este modo no puede interpretar usuarios antiguos como si pertenecieran a la nueva base segura.
+- Una incidencia de conexión con Supabase ya no se muestra como un código de invitación inválido: se informa de que el alta no se ha creado y de que debe revisarse la conexión privada.
+
 ## Alcance
 
 Esta fase refuerza exclusivamente el entorno de pruebas. No modifica `app.py`, no altera la apariencia de la aplicación y no activa ninguna conexión externa por sí misma.

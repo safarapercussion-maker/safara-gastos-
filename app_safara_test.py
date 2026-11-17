@@ -487,6 +487,12 @@ _supabase_storage = None
 _supabase_storage_error = ""
 
 
+@st.cache_resource(show_spinner=False)
+def crear_almacenamiento_supabase_compartido(database_url):
+  """Reutiliza un grupo pequeño de conexiones para todas las sesiones activas."""
+  return SupabaseSafaraStorage(SupabaseStorageConfig(database_url))
+
+
 def obtener_almacenamiento_google():
   """Devuelve el almacén autorizado, priorizando Supabase para datos transaccionales."""
   global _google_storage, _google_storage_error, _supabase_storage, _supabase_storage_error
@@ -496,7 +502,8 @@ def obtener_almacenamiento_google():
     if _supabase_storage_error:
       return None
     try:
-      _supabase_storage = SupabaseSafaraStorage(SupabaseStorageConfig.from_secrets(st.secrets))
+      config = SupabaseStorageConfig.from_secrets(st.secrets)
+      _supabase_storage = crear_almacenamiento_supabase_compartido(config.database_url)
       return _supabase_storage
     except SupabaseStorageConfigurationError as error:
       _supabase_storage_error = str(error)
@@ -538,15 +545,16 @@ def usar_almacenamiento_supabase(storage=None):
 def actualizar_informes_y_copias_en_segundo_plano():
   """No bloquea el uso de la app si Google no está disponible temporalmente."""
   if not supabase_storage_enabled(st.secrets):
-    return
+    return False
   database = obtener_almacenamiento_google()
   if not usar_almacenamiento_supabase(database):
-    return
+    return False
   google = obtener_almacenamiento_drive()
-  run_google_maintenance(database, google)
+  return run_google_maintenance(database, google)
 
 
-actualizar_informes_y_copias_en_segundo_plano()
+# Las copias e informes se lanzan desde Administración. Ejecutarlos al abrir
+# cada página multiplica conexiones y llamadas a Google sin mejorar los datos.
 
 
 def reiniciar_estado_si_cambia_backend():
@@ -2578,6 +2586,83 @@ with tab_admin_app:
       if st.button("Ocultar código", key="ocultar_codigo_invitacion"):
         st.session_state.ultimo_codigo_invitacion = None
         st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### Gestionar personas administradoras")
+    personas_normales = [
+        nombre for nombre, datos in st.session_state.usuarios_registrados.items()
+        if datos.get("rol") == "usuario"
+    ]
+    if personas_normales:
+      with st.form("form_conceder_administracion"):
+        futuro_admin = st.selectbox(
+            "Persona a autorizar como administradora", personas_normales
+        )
+        confirmar_permiso = st.checkbox(
+            "Confirmo que esta persona debe acceder a Administración."
+        )
+        conceder_permiso = st.form_submit_button("AUTORIZAR ADMINISTRACIÓN")
+        if conceder_permiso:
+          if not confirmar_permiso:
+            st.warning("Confirma la autorización antes de continuar.")
+          else:
+            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+            try:
+              actualizado = (
+                  storage.actualizar_rol_usuario(futuro_admin, "admin", usuario_actual)
+                  if usar_almacenamiento_supabase(storage) else False
+              )
+            except SupabaseStorageOperationError:
+              actualizado = False
+            if actualizado:
+              st.session_state.usuarios_registrados[futuro_admin]["rol"] = "admin"
+              st.success("Permiso concedido. Esa persona debe cerrar sesión y volver a entrar.")
+              st.rerun()
+            else:
+              st.error("No se ha podido conceder el permiso de administración.")
+    else:
+      st.info("No hay personas usuarias pendientes de autorización.")
+
+    otros_admins = [
+        nombre for nombre, datos in st.session_state.usuarios_registrados.items()
+        if datos.get("rol") == "admin" and nombre != usuario_actual
+    ]
+    if otros_admins:
+      with st.form("form_retirar_administracion"):
+        admin_a_retirar = st.selectbox(
+            "Persona a devolver a usuario normal", otros_admins
+        )
+        confirmar_retirada = st.checkbox(
+            "Confirmo la retirada del acceso de Administración."
+        )
+        retirar_permiso = st.form_submit_button("RETIRAR ADMINISTRACIÓN")
+        if retirar_permiso:
+          if not confirmar_retirada:
+            st.warning("Confirma la retirada antes de continuar.")
+          else:
+            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+            try:
+              actualizado = (
+                  storage.actualizar_rol_usuario(admin_a_retirar, "usuario", usuario_actual)
+                  if usar_almacenamiento_supabase(storage) else False
+              )
+            except SupabaseStorageOperationError:
+              actualizado = False
+            if actualizado:
+              st.session_state.usuarios_registrados[admin_a_retirar]["rol"] = "usuario"
+              st.success("Acceso de Administración retirado.")
+              st.rerun()
+            else:
+              st.error("No se ha podido retirar el permiso de administración.")
+
+    st.markdown("---")
+    st.markdown("#### Sincronizar informes y copias")
+    st.caption("Actualiza la vista de consulta de Google sin ralentizar la entrada del grupo.")
+    if st.button("ACTUALIZAR INFORMES AHORA", key="sincronizar_informes_admin"):
+      if actualizar_informes_y_copias_en_segundo_plano():
+        st.success("Informes y copias actualizados.")
+      else:
+        st.info("No había cambios pendientes o Google no está disponible ahora mismo.")
 
     st.markdown("---")
     st.markdown("#### Lanzar Nueva Encuesta de Bolo")

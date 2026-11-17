@@ -65,24 +65,32 @@ class SupabaseSafaraStorage:
         try:
             import psycopg  # noqa: F401
             from psycopg.rows import dict_row  # noqa: F401
+            from psycopg_pool import ConnectionPool  # noqa: F401
         except ImportError as error:
             raise SupabaseStorageConfigurationError(
                 "Falta la dependencia segura de PostgreSQL."
             ) from error
         self._database_url = config.database_url
         self._connection_failure: SupabaseStorageOperationError | None = None
-
-    def _connect(self):
-        import psycopg
         from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
 
-        return psycopg.connect(
-            self._database_url,
-            row_factory=dict_row,
-            connect_timeout=10,
-            sslmode="require",
-            options="-c search_path=safara,public",
+        self._pool = ConnectionPool(
+            conninfo=self._database_url,
+            min_size=0,
+            max_size=4,
+            timeout=10,
+            max_idle=120,
+            kwargs={
+                "row_factory": dict_row,
+                "sslmode": "require",
+                "options": "-c search_path=safara,public",
+            },
         )
+
+    def _connection(self):
+        """Obtiene una conexión breve de un grupo compartido por la aplicación."""
+        return self._pool.connection()
 
     @staticmethod
     def _as_text(value: Any) -> str:
@@ -102,7 +110,7 @@ class SupabaseSafaraStorage:
         if self._connection_failure is not None:
             raise self._connection_failure
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 with connection.cursor() as cursor:
                     return callback(cursor)
         except SupabaseStorageOperationError:
@@ -121,6 +129,48 @@ class SupabaseSafaraStorage:
             # la conexión vuelve a comprobarse con la credencial nueva.
             self._connection_failure = failure
             raise failure from error
+
+    def actualizar_rol_usuario(self, objetivo: str, nuevo_rol: str, actor: str) -> bool:
+        """Concede o retira administración con controles dentro de la transacción."""
+        if nuevo_rol not in {"admin", "usuario"}:
+            raise SupabaseStorageOperationError("El permiso solicitado no es válido.")
+
+        def callback(cursor):
+            cursor.execute("select pg_advisory_xact_lock(hashtext('safara-role-management'))")
+            cursor.execute(
+                "select id, rol from safara.usuarios where lower(btrim(nombre))=lower(btrim(%s)) and activo",
+                (actor,),
+            )
+            actor_record = cursor.fetchone()
+            if not actor_record or actor_record["rol"] != "admin":
+                raise SupabaseStorageOperationError("Solo una persona administradora puede gestionar permisos.")
+
+            cursor.execute(
+                "select id, rol, nombre from safara.usuarios where lower(btrim(nombre))=lower(btrim(%s)) and activo for update",
+                (objetivo,),
+            )
+            target = cursor.fetchone()
+            if not target:
+                raise SupabaseStorageOperationError("La persona seleccionada ya no está disponible.")
+            if target["id"] == actor_record["id"]:
+                raise SupabaseStorageOperationError("No puedes modificar tu propio permiso de administración.")
+            if target["rol"] == nuevo_rol:
+                return False
+
+            if target["rol"] == "admin" and nuevo_rol == "usuario":
+                cursor.execute("select count(*) as total from safara.usuarios where activo and rol='admin'")
+                if cursor.fetchone()["total"] <= 1:
+                    raise SupabaseStorageOperationError("No se puede retirar a la última persona administradora.")
+
+            cursor.execute("update safara.usuarios set rol=%s where id=%s", (nuevo_rol, target["id"]))
+            evento = "permiso_admin_concedido" if nuevo_rol == "admin" else "permiso_admin_retirado"
+            cursor.execute(
+                "insert into safara.auditoria (evento, usuario_id, detalle) values (%s, %s, %s)",
+                (evento, target["id"], f"Gestionado por: {actor}"),
+            )
+            return True
+
+        return bool(self._run(callback))
 
     def _user_id(self, cursor, nombre: str):
         cursor.execute(

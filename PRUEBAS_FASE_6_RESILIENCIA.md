@@ -7,6 +7,9 @@
 3. Confirmar que la primera alta se identifica como inicial cuando la tabla segura no contiene usuarios.
 4. Si la conexión a la base fallase, confirmar que aparece un aviso de conexión y no un mensaje incorrecto sobre el código de invitación.
 5. Con una contraseña privada incorrecta, confirmar que la aplicación informa de ello sin repetir conexiones hasta que Streamlit se reinicie tras guardar la credencial correcta.
+6. Como administración, autorizar a una persona usuaria y confirmar que, tras volver a iniciar sesión, accede al panel de Administración.
+7. Retirar ese permiso y confirmar que deja de acceder al panel, conservando siempre al menos una persona administradora.
+8. Confirmar que al abrir la aplicación no se ejecuta una sincronización de Google; dicha sincronización debe iniciarse únicamente desde Administración.
 
 ## Comprobaciones automáticas incluidas
 

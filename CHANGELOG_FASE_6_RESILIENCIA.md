@@ -9,6 +9,7 @@
 - La aplicación reutiliza un grupo pequeño de conexiones seguras y ya no ejecuta sincronizaciones de Google al abrir cada página. Esto reduce la espera inicial y los destellos de recarga.
 - Los justificantes de gasto reciben un identificador único independiente del orden de altas, evitando sobrescrituras de tickets si dos registros coinciden en fecha, importe o persona.
 - La validación de tickets distingue de forma segura un problema de permiso, de carpeta o de subida en Google Drive; nunca crea el gasto si falta su justificante.
+- La subida identifica también si una cuenta técnica carece de cuota propia en Drive y declara compatibilidad con unidades compartidas. Así evita atribuir ese límite de Google a un error del formulario o del gasto.
 
 ## Alcance
 

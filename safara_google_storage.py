@@ -56,6 +56,29 @@ REPORT_SCHEMA: dict[str, list[str]] = {
 _GOOGLE_ID = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 
 
+def _drive_upload_error_message(error: Any) -> str:
+    """Devuelve una explicación accionable sin mostrar credenciales ni respuestas crudas."""
+    status = getattr(getattr(error, "resp", None), "status", 0)
+    raw_content = getattr(error, "content", b"")
+    if isinstance(raw_content, bytes):
+        detail = raw_content.decode("utf-8", errors="ignore").lower()
+    else:
+        detail = str(raw_content).lower()
+
+    if "storagequotaexceeded" in detail or "storage quota" in detail:
+        return (
+            "La cuenta técnica de Google no tiene cuota propia para crear archivos "
+            "en una carpeta personal de Drive."
+        )
+    if status == 401:
+        return "La credencial técnica de Google ya no es válida."
+    if status == 403:
+        return "La cuenta técnica de Google no tiene permiso para guardar en esa carpeta de Drive."
+    if status == 404:
+        return "No se encuentra la carpeta de justificantes configurada."
+    return "Drive no ha aceptado el justificante."
+
+
 def _as_plain_dict(value: Any) -> dict[str, Any]:
     """Convierte los objetos de Secrets de Streamlit sin tocar las claves."""
     if value is None:
@@ -210,6 +233,7 @@ class GoogleSafaraStorage:
     def upload_receipt(self, filename: str, content: bytes, mime_type: str) -> tuple[str, str]:
         """Sube un justificante validado y devuelve id y enlace de Drive."""
         try:
+            from google.auth.exceptions import RefreshError
             from googleapiclient.http import MediaIoBaseUpload
             from googleapiclient.errors import HttpError
 
@@ -218,21 +242,20 @@ class GoogleSafaraStorage:
                 body={"name": filename, "parents": [self._folder_id]},
                 media_body=media,
                 fields="id,webViewLink",
+                supportsAllDrives=True,
             ).execute()
             return str(file_data["id"]), str(file_data.get("webViewLink", ""))
         except HttpError as error:
-            status = getattr(getattr(error, "resp", None), "status", 0)
-            if status in {401, 403}:
-                raise StorageOperationError(
-                    "La cuenta técnica de Google no puede editar la carpeta de Drive."
-                ) from error
-            if status == 404:
-                raise StorageOperationError(
-                    "No se encuentra la carpeta de justificantes configurada."
-                ) from error
-            raise StorageOperationError("Drive no ha aceptado el justificante.") from error
+            raise StorageOperationError(_drive_upload_error_message(error)) from error
+        except RefreshError as error:
+            raise StorageOperationError(
+                "La credencial técnica de Google no se puede validar."
+            ) from error
         except Exception as error:
-            raise StorageOperationError("No se ha podido guardar el justificante en Drive.") from error
+            raise StorageOperationError(
+                "No se ha podido guardar el justificante en Drive. "
+                "La administración debe revisar la conexión técnica de Google."
+            ) from error
 
     def delete_uploaded_file(self, file_id: str) -> None:
         """Elimina un ticket recién subido cuando falla el registro económico asociado."""

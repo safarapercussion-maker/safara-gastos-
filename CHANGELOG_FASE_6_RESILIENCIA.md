@@ -7,6 +7,7 @@
 - Las credenciales incorrectas se detectan con un mensaje específico y la aplicación corta los reintentos durante ese arranque para no saturar el agrupador seguro de conexiones.
 - El permiso de Administración se puede conceder o retirar desde el panel de una persona administradora. Cada cambio queda registrado y nunca se puede retirar el último acceso de Administración.
 - La aplicación reutiliza un grupo pequeño de conexiones seguras y ya no ejecuta sincronizaciones de Google al abrir cada página. Esto reduce la espera inicial y los destellos de recarga.
+- Los justificantes de gasto reciben un identificador único independiente del orden de altas, evitando sobrescrituras de tickets si dos registros coinciden en fecha, importe o persona.
 
 ## Alcance
 

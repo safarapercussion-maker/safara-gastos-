@@ -5,6 +5,7 @@ import io
 import os
 import random
 import re
+import uuid
 import zipfile
 
 try:
@@ -2413,8 +2414,9 @@ with tab_gastos_app:
               else 1
           )
 
+          identificador_ticket = uuid.uuid4().hex[:16]
           nombre_fichero = (
-              f"Gasto_{id_nuevo}_{fecha}_{usuario_actual}_{importe}EUR.{ext}"
+              f"Gasto_{fecha}_{identificador_ticket}.{ext}"
           )
           path_destino = ""
           drive_file_id = ""
@@ -2472,7 +2474,9 @@ with tab_gastos_app:
                   [st.session_state.gastos, pd.DataFrame([nuevo_reg])], ignore_index=True,
               )
             st.success("¡Gasto registrado con éxito!")
-            registrar_auditoria("gasto_registrado", usuario_actual, str(id_nuevo))
+            registrar_auditoria(
+                "gasto_registrado", usuario_actual, str(nuevo_reg.get("ID", id_nuevo))
+            )
             st.info(
                 "El gasto queda pendiente de revisión en el panel de administración."
             )

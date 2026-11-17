@@ -211,6 +211,7 @@ class GoogleSafaraStorage:
         """Sube un justificante validado y devuelve id y enlace de Drive."""
         try:
             from googleapiclient.http import MediaIoBaseUpload
+            from googleapiclient.errors import HttpError
 
             media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
             file_data = self._drive.files().create(
@@ -219,6 +220,17 @@ class GoogleSafaraStorage:
                 fields="id,webViewLink",
             ).execute()
             return str(file_data["id"]), str(file_data.get("webViewLink", ""))
+        except HttpError as error:
+            status = getattr(getattr(error, "resp", None), "status", 0)
+            if status in {401, 403}:
+                raise StorageOperationError(
+                    "La cuenta técnica de Google no puede editar la carpeta de Drive."
+                ) from error
+            if status == 404:
+                raise StorageOperationError(
+                    "No se encuentra la carpeta de justificantes configurada."
+                ) from error
+            raise StorageOperationError("Drive no ha aceptado el justificante.") from error
         except Exception as error:
             raise StorageOperationError("No se ha podido guardar el justificante en Drive.") from error
 

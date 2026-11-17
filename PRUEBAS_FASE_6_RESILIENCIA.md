@@ -11,6 +11,7 @@
 7. Retirar ese permiso y confirmar que deja de acceder al panel, conservando siempre al menos una persona administradora.
 8. Confirmar que al abrir la aplicación no se ejecuta una sincronización de Google; dicha sincronización debe iniciarse únicamente desde Administración.
 9. Registrar un gasto con ticket y comprobar que el justificante queda asociado al gasto concreto en Drive, aunque coincida en fecha e importe con otro registro.
+10. Si Drive rechaza el ticket, confirmar que el aviso identifica la categoría de incidencia sin registrar un gasto incompleto.
 
 ## Comprobaciones automáticas incluidas
 

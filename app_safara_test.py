@@ -2431,14 +2431,17 @@ with tab_gastos_app:
                   nombre_fichero, contenido_fichero, mime_type
               )
             elif supabase_storage_enabled(st.secrets) or usar_almacenamiento_google():
-              raise StorageOperationError("La conexión segura con Google no está lista.")
+              raise StorageOperationError(
+                  _google_storage_error or "La conexión segura con Google no está lista."
+              )
             else:
               path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
               with open(path_destino, "wb") as f:
                 f.write(contenido_fichero)
               enlace_excel = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
-          except (StorageOperationError, SupabaseStorageOperationError):
-            st.error("No se ha podido guardar el justificante en Drive. El gasto no se ha registrado.")
+          except (StorageOperationError, SupabaseStorageOperationError) as error:
+            detalle_drive = str(error).strip() or "No se ha podido guardar el justificante en Drive."
+            st.error(f"{detalle_drive} El gasto no se ha registrado.")
             st.stop()
 
           concepto_final = f"{categoria_seleccionada}" + (

@@ -345,6 +345,94 @@ class SupabaseSafaraStorage:
             )
         self._run(callback)
 
+    def cerrar_ensayo_semanal(
+        self,
+        ciclo_id: str,
+        fecha: dt.date,
+        hora_cierre: dt.time,
+        ubicacion: str,
+        quorum_minimo: int,
+    ) -> dict[str, Any]:
+        """Cierra una semana de ensayo una sola vez y conserva su resultado.
+
+        La exclusión transaccional evita que dos visitas simultáneas generen
+        resultados distintos. Los votos originales no se modifican ni eliminan.
+        """
+        def callback(cursor):
+            cursor.execute("select pg_advisory_xact_lock(hashtext('safara-weekly-rehearsal'))")
+            cursor.execute(
+                """select count(*)::integer as asistentes,
+                          count(*) filter (where u.instrumento = 'Repenike')::integer as repenikes,
+                          count(*) filter (where u.instrumento = 'Caja')::integer as cajas
+                   from safara.votos v
+                   join safara.usuarios u on u.id = v.usuario_id and u.activo
+                   where v.encuesta_id = 'ensayo_proximo'
+                     and v.ciclo_id = %s and v.respuesta = 'SI'""",
+                (ciclo_id,),
+            )
+            resumen = cursor.fetchone() or {"asistentes": 0, "repenikes": 0, "cajas": 0}
+            asistentes = int(resumen["asistentes"] or 0)
+            repenikes = int(resumen["repenikes"] or 0)
+            cajas = int(resumen["cajas"] or 0)
+            estado = (
+                "CONFIRMADO"
+                if asistentes >= quorum_minimo and repenikes >= 1 and cajas >= 1
+                else "NO_REALIZADO"
+            )
+            cursor.execute(
+                """insert into safara.ensayos_historial
+                   (ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                    asistentes_confirmados, repenikes_confirmados, cajas_confirmadas)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s)
+                   on conflict (ciclo_id) do nothing
+                   returning ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                             asistentes_confirmados, repenikes_confirmados,
+                             cajas_confirmadas, cerrado_en""",
+                (ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                 asistentes, repenikes, cajas),
+            )
+            cerrado = cursor.fetchone()
+            if cerrado:
+                cursor.execute(
+                    """insert into safara.auditoria (evento, detalle)
+                       values ('ensayo_semanal_cerrado', %s)""",
+                    (f"{ciclo_id}: {estado} ({asistentes} asistentes, "
+                     f"{repenikes} repenikes, {cajas} cajas)",),
+                )
+                return cerrado
+            cursor.execute(
+                """select ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                          asistentes_confirmados, repenikes_confirmados,
+                          cajas_confirmadas, cerrado_en
+                   from safara.ensayos_historial where ciclo_id = %s""",
+                (ciclo_id,),
+            )
+            return cursor.fetchone()
+
+        return self._run(callback)
+
+    def obtener_historial_ensayos(self, limite: int = 52) -> list[dict[str, Any]]:
+        """Devuelve el historial semanal más reciente, sin exponer votos individuales."""
+        limite = max(1, min(int(limite), 260))
+
+        def callback(cursor):
+            cursor.execute(
+                """select ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                          asistentes_confirmados, repenikes_confirmados,
+                          cajas_confirmadas, cerrado_en
+                   from safara.ensayos_historial
+                   order by fecha desc limit %s""",
+                (limite,),
+            )
+            rows = list(cursor.fetchall())
+            for row in rows:
+                for key, value in list(row.items()):
+                    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+                        row[key] = value.isoformat()
+            return rows
+
+        return self._run(callback)
+
     def crear_actuacion(self, data: dict[str, Any], usuario: str) -> dict[str, Any]:
         def callback(cursor):
             cursor.execute(

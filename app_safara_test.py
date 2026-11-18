@@ -55,6 +55,11 @@ from safara_supabase_storage import (
     is_enabled as supabase_storage_enabled,
 )
 from safara_maintenance import run_google_maintenance
+from safara_ensayos import (
+    QUORUM_ENSAYO_MINIMO,
+    ciclos_que_deben_cerrarse,
+    informacion_ensayo,
+)
 
 st.set_page_config(
     page_title="Safara Percussion - App Oficial",
@@ -467,17 +472,7 @@ AUDITORIA_FILE = "auditoria_safara.log"
 
 FECHA_FUNDACION = datetime.date(2023, 4, 23)
 
-FECHA_REFERENCIA_ENSAYO = datetime.date(2026, 10, 19)
-
 hoy_m = datetime.datetime.now(ZoneInfo("Europe/Madrid")).date()
-lunes_semana_actual = hoy_m - datetime.timedelta(days=hoy_m.weekday())
-semanas_transcurridas = (lunes_semana_actual - FECHA_REFERENCIA_ENSAYO).days // 7
-
-if semanas_transcurridas % 2 == 0:
-  ubicacion_rotativa = "Baragazte (Barañain)"
-else:
-  ubicacion_rotativa = "Gaztetxe de Zizur"
-
 ciclo_actual = obtener_ciclo_semanal_actual()
 
 
@@ -907,6 +902,11 @@ def registrar_voto_en_sheets_cloud(encuesta_id, usuario_id, respuesta):
 
 def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
   global ciclo_actual
+  if str(encuesta_id) == "ensayo_proximo":
+    ensayo = informacion_ensayo()
+    if not ensayo["votacion_abierta"]:
+      st.warning("La encuesta de ensayo ya está cerrada. El resultado queda guardado en el historial.")
+      return False
   ahora_str = datetime.datetime.now(ZoneInfo("Europe/Madrid")).strftime(
       "%Y-%m-%d %H:%M:%S"
   )
@@ -914,7 +914,9 @@ def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
   votos_anteriores = df.copy(deep=True)
 
   ciclo_target = (
-      "BOLO_PERMANENTE" if str(encuesta_id).startswith("bolo_") else ciclo_actual
+      "BOLO_PERMANENTE" if str(encuesta_id).startswith("bolo_")
+      else informacion_ensayo()["ciclo_id"] if str(encuesta_id) == "ensayo_proximo"
+      else ciclo_actual
   )
 
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
@@ -957,7 +959,9 @@ def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
 def obtener_voto_usuario(encuesta_id, usuario_id):
   global ciclo_actual
   ciclo_target = (
-      "BOLO_PERMANENTE" if str(encuesta_id).startswith("bolo_") else ciclo_actual
+      "BOLO_PERMANENTE" if str(encuesta_id).startswith("bolo_")
+      else informacion_ensayo()["ciclo_id"] if str(encuesta_id) == "ensayo_proximo"
+      else ciclo_actual
   )
   df = st.session_state.votos_historial
   if df.empty:
@@ -975,7 +979,9 @@ def obtener_voto_usuario(encuesta_id, usuario_id):
 def obtener_todos_votos_encuesta(encuesta_id):
   global ciclo_actual
   ciclo_target = (
-      "BOLO_PERMANENTE" if str(encuesta_id).startswith("bolo_") else ciclo_actual
+      "BOLO_PERMANENTE" if str(encuesta_id).startswith("bolo_")
+      else informacion_ensayo()["ciclo_id"] if str(encuesta_id) == "ensayo_proximo"
+      else ciclo_actual
   )
   df = st.session_state.votos_historial
   if df.empty:
@@ -984,6 +990,25 @@ def obtener_todos_votos_encuesta(encuesta_id):
       (df["encuesta_id"] == str(encuesta_id))
       & (df["ciclo_id"] == str(ciclo_target))
   ]
+
+
+def sincronizar_historial_ensayos():
+  """Cierra por reloj los ensayos vencidos y devuelve el historial disponible."""
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if not usar_almacenamiento_supabase(storage):
+    return []
+  try:
+    for cierre in ciclos_que_deben_cerrarse():
+      storage.cerrar_ensayo_semanal(
+          cierre["ciclo_id"],
+          cierre["fecha"],
+          cierre["hora_cierre"],
+          cierre["ubicacion"],
+          QUORUM_ENSAYO_MINIMO,
+      )
+    return storage.obtener_historial_ensayos()
+  except SupabaseStorageOperationError:
+    return []
 
 
 # --- PERSISTENCIA Y CARGA DE ACTUACIONES / BOLOS (CON GOOGLE SHEETS) ---
@@ -1173,15 +1198,6 @@ def guardar_confesionario_excel():
     st.error("No se ha podido preparar el mensaje para guardarlo.")
     return False
 
-
-if "proximo_ensayo" not in st.session_state:
-  st.session_state.proximo_ensayo = {
-      "id": "ensayo_proximo",
-      "fecha": hoy_m + datetime.timedelta(days=(4 - hoy_m.weekday()) % 7),
-      "hora": "19:00h - 19:30h",
-      "ubicacion_nombre": ubicacion_rotativa,
-      "url_maps": UBICACIONES_ENSAYO[ubicacion_rotativa],
-  }
 
 if "gastos" not in st.session_state:
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
@@ -1903,7 +1919,9 @@ with tab_movidas:
           unsafe_allow_html=True,
       )
 
-  ensayo_info = st.session_state.proximo_ensayo
+  ensayo_info = informacion_ensayo()
+  ensayo_info["url_maps"] = UBICACIONES_ENSAYO[ensayo_info["ubicacion_nombre"]]
+  historial_ensayos = sincronizar_historial_ensayos()
   fecha_ens_str = (
       ensayo_info["fecha"].strftime("%d/%m/%Y")
       if isinstance(ensayo_info["fecha"], datetime.date)
@@ -1920,9 +1938,27 @@ with tab_movidas:
   )
   num_confirmados = len(confirmados_list)
 
-  ensayo_confirmado = num_confirmados >= 6
+  counts = {
+      "Repenike": 0,
+      "Caja": 0,
+      "Surdo": 0,
+      "Surdo de contra": 0,
+      "Ganza (bailarinas)": 0,
+  }
+  for c_user in confirmados_list:
+    u_inst = st.session_state.usuarios_registrados.get(c_user, {}).get(
+        "instrumento", "Repenike"
+    )
+    if u_inst in counts:
+      counts[u_inst] += 1
+
+  ensayo_confirmado = (
+      num_confirmados >= QUORUM_ENSAYO_MINIMO
+      and counts["Repenike"] >= 1
+      and counts["Caja"] >= 1
+  )
   badge_estado_ens = (
-      "🟢 CONFIRMADO" if ensayo_confirmado else "🟡 PENDIENTE DE QUORUM"
+      "🟢 CONFIRMADO" if ensayo_confirmado else "🟡 PENDIENTE DE QUÓRUM"
   )
   color_badge_ens = "#2ECC71" if ensayo_confirmado else "#E74C3C"
 
@@ -1953,41 +1989,44 @@ with tab_movidas:
       unsafe_allow_html=True,
   )
 
-  voto_ens_actual = obtener_voto_usuario("ensayo_proximo", usuario_actual)
-  img_si_cls = (
-      "poll-img-green-sel"
-      if voto_ens_actual == "SI"
-      else "poll-img-green-norm"
-  )
-  img_no_cls = (
-      "poll-img-red-sel" if voto_ens_actual == "NO" else "poll-img-red-norm"
-  )
+  if ensayo_info["votacion_abierta"]:
+    voto_ens_actual = obtener_voto_usuario("ensayo_proximo", usuario_actual)
+    img_si_cls = (
+        "poll-img-green-sel"
+        if voto_ens_actual == "SI"
+        else "poll-img-green-norm"
+    )
+    img_no_cls = (
+        "poll-img-red-sel" if voto_ens_actual == "NO" else "poll-img-red-norm"
+    )
 
-  st.markdown(
-      f"""
-        <div class="safara-poll-row">
-            <div class="safara-poll-col">
-                <img src="{logo_b64_inline}" class="poll-img-btn {img_si_cls}" />
-                <div class="poll-label-green">A tope, se le da</div>
-            </div>
-            <div class="safara-poll-col">
-                <img src="{logo_b64_inline}" class="poll-img-btn {img_no_cls}" />
-                <div class="poll-label-red">No puedo, tengo lío</div>
-            </div>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
+    st.markdown(
+        f"""
+          <div class="safara-poll-row">
+              <div class="safara-poll-col">
+                  <img src="{logo_b64_inline}" class="poll-img-btn {img_si_cls}" />
+                  <div class="poll-label-green">A tope, se le da</div>
+              </div>
+              <div class="safara-poll-col">
+                  <img src="{logo_b64_inline}" class="poll-img-btn {img_no_cls}" />
+                  <div class="poll-label-red">No puedo, tengo lío</div>
+              </div>
+          </div>
+      """,
+        unsafe_allow_html=True,
+    )
 
-  voto_ens_si, voto_ens_no = st.columns(2)
-  with voto_ens_si:
-    if st.button("A tope, se le da", key="btn_ens_si"):
-      if registrar_voto_backend("ensayo_proximo", usuario_actual, "SI"):
-        st.rerun()
-  with voto_ens_no:
-    if st.button("No puedo, tengo lío", key="btn_ens_no"):
-      if registrar_voto_backend("ensayo_proximo", usuario_actual, "NO"):
-        st.rerun()
+    voto_ens_si, voto_ens_no = st.columns(2)
+    with voto_ens_si:
+      if st.button("A tope, se le da", key="btn_ens_si"):
+        if registrar_voto_backend("ensayo_proximo", usuario_actual, "SI"):
+          st.rerun()
+    with voto_ens_no:
+      if st.button("No puedo, tengo lío", key="btn_ens_no"):
+        if registrar_voto_backend("ensayo_proximo", usuario_actual, "NO"):
+          st.rerun()
+  else:
+    st.info("La encuesta semanal está cerrada. El resultado queda guardado en el historial y la siguiente se abrirá el lunes a las 08:00.")
 
   st.markdown(
       f"<p style='text-align: center; font-size: 14px; font-weight: 800;"
@@ -1997,27 +2036,20 @@ with tab_movidas:
   )
 
   if confirmados_list:
-    counts = {
-        "Repenike": 0,
-        "Caja": 0,
-        "Surdo": 0,
-        "Surdo de contra": 0,
-        "Ganza (bailarinas)": 0,
-    }
-    for c_user in confirmados_list:
-      u_inst = st.session_state.usuarios_registrados.get(c_user, {}).get(
-          "instrumento", "Repenike"
-      )
-      if u_inst in counts:
-        counts[u_inst] += 1
-      else:
-        counts["Repenike"] += 1
-
     st.caption(
         f"Repenikes: {counts['Repenike']} | Cajas: {counts['Caja']} |"
         f" Surdos: {counts['Surdo']} | Surdos de contra:"
         f" {counts['Surdo de contra']} | Bailarinas:"
         f" {counts['Ganza (bailarinas)']}"
+    )
+
+  if historial_ensayos:
+    ensayos_confirmados = sum(
+        1 for ensayo in historial_ensayos if ensayo.get("estado") == "CONFIRMADO"
+    )
+    st.caption(
+        f"Historial técnico: {ensayos_confirmados} ensayos confirmados de "
+        f"{len(historial_ensayos)} semanas cerradas."
     )
 
   st.markdown("---")

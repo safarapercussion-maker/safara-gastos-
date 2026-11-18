@@ -45,6 +45,7 @@ from safara_google_drive_oauth import (
     authorization_url as google_drive_authorization_url,
     credentials_from_encrypted_token,
     exchange_code_for_encrypted_token,
+    returning_user_from_state,
 )
 from safara_supabase_storage import (
     SupabaseSafaraStorage,
@@ -216,16 +217,16 @@ st.markdown(
     f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=Cinzel:wght@700&display=swap');
-    
+
     * {{
         font-family: 'Montserrat', sans-serif !important;
     }}
-    
+
     .stApp {{
         {bg_css_login}
         color: #FFFFFF !important;
     }}
-    
+
     [data-testid="stStatusWidget"], header {{
         visibility: hidden !important;
         display: none !important;
@@ -303,7 +304,7 @@ st.markdown(
         padding-top: 0 !important;
         margin-bottom: 2px !important;
     }}
-    
+
     div[data-baseweb="select"] > div {{
         background-color: #121212 !important;
         color: #FFFFFF !important;
@@ -1559,6 +1560,24 @@ if "bloqueado_hasta" not in st.session_state:
 if "mostrar_recuperacion" not in st.session_state:
   st.session_state.mostrar_recuperacion = False
 
+# El retorno de Google abre una pestaña independiente. Recuperamos la sesión
+# únicamente si vuelve un código de OAuth con un estado cifrado y firmado que
+# esta misma aplicación emitió hace menos de quince minutos.
+if not st.session_state.usuario_autenticado:
+  codigo_oauth_retorno = str(st.query_params.get("code", "")).strip()
+  estado_oauth_retorno = str(st.query_params.get("state", "")).strip()
+  if codigo_oauth_retorno and estado_oauth_retorno:
+    try:
+      config_retorno = GoogleDriveOAuthConfig.from_secrets(st.secrets)
+      usuario_retorno = returning_user_from_state(
+          config_retorno, estado_oauth_retorno
+      )
+    except GoogleDriveOAuthConfigurationError:
+      usuario_retorno = None
+    if usuario_retorno and es_administrador(usuario_retorno):
+      st.session_state.usuario_autenticado = usuario_retorno
+      st.session_state.ultimo_acceso = datetime.datetime.now()
+
 if st.session_state.usuario_autenticado:
   ahora = datetime.datetime.now()
   tiempo_inactivo = ahora - st.session_state.ultimo_acceso
@@ -2700,14 +2719,19 @@ with tab_admin_app:
         if drive_autorizado:
           st.success("Drive está autorizado y listo para guardar justificantes.")
         else:
-          url_autorizacion = google_drive_authorization_url(configuracion_drive_oauth)
+          url_autorizacion = google_drive_authorization_url(
+              configuracion_drive_oauth, usuario_actual
+          )
           st.markdown(
-              f'<a href="{escapar_html(url_autorizacion)}" target="_self" '
+              f'<a href="{escapar_html(url_autorizacion)}" target="_blank" rel="noopener noreferrer" '
               'style="display:inline-block;background:#c62828;color:#ffffff;padding:10px 16px;'
               'border-radius:8px;font-weight:700;text-decoration:none;">AUTORIZAR GOOGLE DRIVE</a>',
               unsafe_allow_html=True,
           )
-          st.caption("Inicia sesión con la cuenta que es propietaria de la carpeta de SAFARA.")
+          st.caption(
+              "Se abrirá una pestaña segura: elige la cuenta propietaria de la carpeta de SAFARA. "
+              "Tu sesión de esta pestaña se conservará aunque la autorización falle o se cancele."
+          )
 
     st.markdown("#### Crear código de alta")
     st.caption(
@@ -2831,7 +2855,7 @@ with tab_admin_app:
         else:
           # Validación de duplicados para evitar múltiples columnas idénticas
           duplicado = any(
-              a.get("titulo", "").strip().lower() == b_tit.strip().lower() 
+              a.get("titulo", "").strip().lower() == b_tit.strip().lower()
               and str(a.get("fecha")) == str(b_fec)
               for a in st.session_state.actuaciones
           )

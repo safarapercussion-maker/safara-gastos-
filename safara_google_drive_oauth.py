@@ -25,7 +25,7 @@ class GoogleDriveOAuthOperationError(RuntimeError):
 
 _DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 _TOKEN_URI = "https://oauth2.googleapis.com/token"
-_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
+_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 
 
 @dataclass(frozen=True)
@@ -88,9 +88,45 @@ def _state_signing_key(config: GoogleDriveOAuthConfig) -> bytes:
     return base64.urlsafe_b64decode(config.encryption_key.encode("ascii"))
 
 
-def create_state(config: GoogleDriveOAuthConfig) -> str:
-    """Crea un estado firmado y breve; no depende de la sesión del navegador."""
-    payload = f"{int(time.time())}.{secrets.token_urlsafe(24)}"
+def _encrypt_returning_user(config: GoogleDriveOAuthConfig, username: str) -> str:
+    """Oculta la identidad de retorno dentro del estado temporal de OAuth."""
+    from cryptography.fernet import Fernet
+
+    return Fernet(config.encryption_key.encode("ascii")).encrypt(
+        username.encode("utf-8")
+    ).decode("ascii")
+
+
+def _decrypt_returning_user(config: GoogleDriveOAuthConfig, encrypted_username: str) -> str | None:
+    try:
+        from cryptography.fernet import Fernet, InvalidToken
+
+        username = Fernet(config.encryption_key.encode("ascii")).decrypt(
+            encrypted_username.encode("ascii")
+        ).decode("utf-8").strip()
+        return username or None
+    except (InvalidToken, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _state_parts(config: GoogleDriveOAuthConfig, state: str) -> tuple[str, str, str] | None:
+    try:
+        issued_at, nonce, encrypted_username, signature = state.split(".", 3)
+        payload = f"{issued_at}.{nonce}.{encrypted_username}"
+        expected = hmac.new(
+            _state_signing_key(config), payload.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        return issued_at, nonce, encrypted_username
+    except (TypeError, ValueError):
+        return None
+
+
+def create_state(config: GoogleDriveOAuthConfig, username: str = "") -> str:
+    """Crea un estado cifrado, firmado y breve para el retorno de OAuth."""
+    encrypted_username = _encrypt_returning_user(config, username)
+    payload = f"{int(time.time())}.{secrets.token_urlsafe(24)}.{encrypted_username}"
     signature = hmac.new(
         _state_signing_key(config), payload.encode("utf-8"), hashlib.sha256
     ).hexdigest()
@@ -98,21 +134,27 @@ def create_state(config: GoogleDriveOAuthConfig) -> str:
 
 
 def verify_state(config: GoogleDriveOAuthConfig, state: str, maximum_age_seconds: int = 900) -> bool:
+    parts = _state_parts(config, state)
+    if not parts:
+        return False
     try:
-        issued_at, nonce, signature = state.split(".", 2)
-        payload = f"{issued_at}.{nonce}"
-        expected = hmac.new(
-            _state_signing_key(config), payload.encode("utf-8"), hashlib.sha256
-        ).hexdigest()
-        return (
-            hmac.compare_digest(signature, expected)
-            and 0 <= time.time() - int(issued_at) <= maximum_age_seconds
-        )
-    except (TypeError, ValueError):
+        issued_at, _, _ = parts
+        return 0 <= time.time() - int(issued_at) <= maximum_age_seconds
+    except ValueError:
         return False
 
 
-def authorization_url(config: GoogleDriveOAuthConfig) -> str:
+def returning_user_from_state(
+    config: GoogleDriveOAuthConfig, state: str, maximum_age_seconds: int = 900
+) -> str | None:
+    """Devuelve la persona que inició OAuth solo si el estado sigue siendo válido."""
+    if not verify_state(config, state, maximum_age_seconds):
+        return None
+    parts = _state_parts(config, state)
+    return _decrypt_returning_user(config, parts[2]) if parts else None
+
+
+def authorization_url(config: GoogleDriveOAuthConfig, username: str = "") -> str:
     try:
         from google_auth_oauthlib.flow import Flow
 
@@ -122,8 +164,8 @@ def authorization_url(config: GoogleDriveOAuthConfig) -> str:
         url, _ = flow.authorization_url(
             access_type="offline",
             include_granted_scopes="true",
-            prompt="consent",
-            state=create_state(config),
+            prompt="consent select_account",
+            state=create_state(config, username),
         )
         return str(url)
     except Exception as error:

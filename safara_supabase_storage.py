@@ -26,12 +26,55 @@ class SupabaseStorageAuthenticationError(SupabaseStorageOperationError):
     """La contraseña configurada no permite abrir la conexión privada."""
 
 
-def is_enabled(secrets: Any) -> bool:
+_SECRET_SECTIONS = ("safara_supabase_storage", "safara_google_storage")
+
+
+def _section_values(secrets: Any, section_name: str) -> dict[str, Any]:
+    """Lee una sección TOML sin depender de la implementación de Streamlit."""
     try:
-        value = secrets.get("enable_supabase_storage", False)
+        section = secrets.get(section_name, {})
+        return section.to_dict() if hasattr(section, "to_dict") else dict(section)
+    except (AttributeError, TypeError, ValueError):
+        return {}
+
+
+def _configured_database_url(secrets: Any) -> str:
+    """Acepta la configuración histórica y la sección específica nueva."""
+    candidates: list[Any] = []
+    try:
+        candidates.append(secrets.get("database_url", ""))
     except (AttributeError, TypeError):
-        return False
-    return value is True or str(value).strip().lower() in {"true", "1", "si", "sí"}
+        pass
+    for section_name in _SECRET_SECTIONS:
+        candidates.append(_section_values(secrets, section_name).get("database_url", ""))
+
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if value.startswith(("postgresql://", "postgres://", "postgresql+psycopg://")):
+            return value
+    return ""
+
+
+def _configured_enablement(secrets: Any) -> list[Any]:
+    values: list[Any] = []
+    try:
+        values.append(secrets.get("enable_supabase_storage", None))
+    except (AttributeError, TypeError):
+        pass
+    for section_name in _SECRET_SECTIONS:
+        values.append(
+            _section_values(secrets, section_name).get("enable_supabase_storage", None)
+        )
+    return values
+
+
+def is_enabled(secrets: Any) -> bool:
+    for value in _configured_enablement(secrets):
+        if value is True or str(value).strip().lower() in {"true", "1", "si", "sí"}:
+            return True
+    # Si la URL privada está presente, se trata de una configuración deliberada;
+    # evita que una cabecera TOML movida deje los datos críticos sin persistencia.
+    return bool(_configured_database_url(secrets))
 
 
 @dataclass(frozen=True)
@@ -40,13 +83,8 @@ class SupabaseStorageConfig:
 
     @classmethod
     def from_secrets(cls, secrets: Any) -> "SupabaseStorageConfig":
-        try:
-            url = str(secrets.get("database_url", "")).strip()
-        except (AttributeError, TypeError) as error:
-            raise SupabaseStorageConfigurationError(
-                "Falta la conexión privada de Supabase en Streamlit Secrets."
-            ) from error
-        if not url.startswith(("postgresql://", "postgres://", "postgresql+psycopg://")):
+        url = _configured_database_url(secrets)
+        if not url:
             raise SupabaseStorageConfigurationError(
                 "La conexión privada de Supabase no tiene un formato válido."
             )

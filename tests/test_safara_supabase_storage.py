@@ -2,7 +2,9 @@ import unittest
 
 from safara_supabase_storage import (
     SupabaseSafaraStorage,
+    SupabaseStorageConfig,
     SupabaseStorageOperationError,
+    is_enabled,
 )
 
 
@@ -52,6 +54,30 @@ class RoleManagementTests(unittest.TestCase):
             storage_with(cursor).actualizar_rol_usuario(
                 "Otro Admin", "usuario", "Administración Prueba"
             )
+
+
+class ConfigurationCompatibilityTests(unittest.TestCase):
+    URL = "postgresql://postgres.example:secret@aws-1-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require"
+
+    def test_accepts_existing_root_level_configuration(self):
+        secrets = {"enable_supabase_storage": True, "database_url": self.URL}
+        self.assertTrue(is_enabled(secrets))
+        self.assertEqual(SupabaseStorageConfig.from_secrets(secrets).database_url, self.URL)
+
+    def test_accepts_configuration_under_the_supabase_section(self):
+        secrets = {"safara_supabase_storage": {"database_url": self.URL}}
+        self.assertTrue(is_enabled(secrets))
+        self.assertEqual(SupabaseStorageConfig.from_secrets(secrets).database_url, self.URL)
+
+    def test_recovers_legacy_url_moved_into_google_section(self):
+        secrets = {
+            "safara_google_storage": {
+                "enable_supabase_storage": "sí",
+                "database_url": self.URL,
+            }
+        }
+        self.assertTrue(is_enabled(secrets))
+        self.assertEqual(SupabaseStorageConfig.from_secrets(secrets).database_url, self.URL)
 
 
 if __name__ == "__main__":

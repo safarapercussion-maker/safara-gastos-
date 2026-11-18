@@ -2688,7 +2688,10 @@ with tab_admin_app:
     else:
       almacenamiento_seguro = obtener_almacenamiento_google()
       if not usar_almacenamiento_supabase(almacenamiento_seguro):
-        st.warning("La base segura no está disponible; Drive no puede autorizarse todavía.")
+        st.error(
+            _supabase_storage_error
+            or "La base segura no está disponible; Drive no puede autorizarse todavía."
+        )
       else:
         codigo_google = str(st.query_params.get("code", "")).strip()
         estado_google = str(st.query_params.get("state", "")).strip()

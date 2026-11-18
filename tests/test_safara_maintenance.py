@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import unittest
 import zipfile
@@ -67,7 +68,13 @@ class MaintenanceTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             self.assertEqual(set(archive.namelist()), {"gastos.csv", "caja.csv", "actuaciones.csv", "MANIFIESTO.json"})
             manifest = json.loads(archive.read("MANIFIESTO.json"))
+            gastos_csv = archive.read("gastos.csv")
         self.assertEqual(manifest["contenido"]["gastos"], 1)
+        self.assertIn("gastos.csv", manifest["sha256_archivos"])
+        self.assertEqual(
+            manifest["sha256_archivos"]["gastos.csv"],
+            hashlib.sha256(gastos_csv).hexdigest(),
+        )
 
     def test_maintenance_writes_report_and_daily_backup(self):
         database = FakeDatabase()

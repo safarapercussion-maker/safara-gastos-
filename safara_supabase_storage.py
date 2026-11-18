@@ -120,14 +120,17 @@ class SupabaseSafaraStorage:
                 failure = SupabaseStorageAuthenticationError(
                     "La contraseña de la conexión privada de Supabase no coincide."
                 )
+                # Una contraseña errónea no se corrige sola; se evita abrir una
+                # conexión por cada interacción hasta que Streamlit reinicie con
+                # el secreto actualizado.
+                self._connection_failure = failure
             else:
                 failure = SupabaseStorageOperationError(
                     "No se ha podido guardar la información en Supabase."
                 )
-            # En una configuración errónea, evita abrir decenas de conexiones en
-            # un mismo arranque. Al guardar Secrets, Streamlit reinicia la app y
-            # la conexión vuelve a comprobarse con la credencial nueva.
-            self._connection_failure = failure
+            # Un corte temporal de red no debe dejar toda la app marcada como
+            # fallida hasta el siguiente despliegue. La siguiente acción podrá
+            # recuperar la conexión de forma normal.
             raise failure from error
 
     def actualizar_rol_usuario(self, objetivo: str, nuevo_rol: str, actor: str) -> bool:

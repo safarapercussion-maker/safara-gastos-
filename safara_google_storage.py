@@ -289,7 +289,7 @@ class GoogleSafaraStorage:
             raise StorageOperationError("No se ha podido actualizar el informe de Google Sheets.") from error
 
     def upload_backup(self, filename: str, content: bytes) -> str:
-        """Guarda una copia técnica en una subcarpeta separada de los tickets."""
+        """Guarda una copia técnica sin duplicarla si se repite el mismo día."""
         try:
             from googleapiclient.http import MediaIoBaseUpload
 
@@ -311,11 +311,25 @@ class GoogleSafaraStorage:
                     fields="id",
                 ).execute()
                 backup_folder_id = folder["id"]
+            existing = self._drive.files().list(
+                q=(f"name = '{filename}' and '{backup_folder_id}' in parents "
+                   "and trashed = false"),
+                fields="files(id)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            ).execute().get("files", [])
             media = MediaIoBaseUpload(io.BytesIO(content), mimetype="application/zip", resumable=False)
+            if existing:
+                updated = self._drive.files().update(
+                    fileId=existing[0]["id"], media_body=media, fields="id",
+                    supportsAllDrives=True,
+                ).execute()
+                return str(updated["id"])
             created = self._drive.files().create(
                 body={"name": filename, "parents": [backup_folder_id]},
                 media_body=media,
                 fields="id",
+                supportsAllDrives=True,
             ).execute()
             return str(created["id"])
         except Exception as error:

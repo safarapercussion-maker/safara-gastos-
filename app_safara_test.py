@@ -147,13 +147,9 @@ def escapar_html(valor):
 
 
 def render_logo_png(filename, width=210):
-  if filename and os.path.exists(filename):
+  encoded, mime = cargar_recurso_visual(filename)
+  if encoded:
     try:
-      with open(filename, "rb") as f:
-        data = f.read()
-      encoded = base64.b64encode(data).decode()
-      ext = filename.split(".")[-1].lower()
-      mime = "image/png" if ext == "png" else "image/jpeg"
       return f"""
                 <div class="sparta-logo-container">
                     <div class="sparta-circle-logo">
@@ -161,23 +157,28 @@ def render_logo_png(filename, width=210):
                     </div>
                 </div>
             """
-    except:
+    except Exception:
       return None
   return None
 
 
 def render_logo_inline_b64(filename):
-  if filename and os.path.exists(filename):
-    try:
-      with open(filename, "rb") as f:
-        data = f.read()
-      encoded = base64.b64encode(data).decode()
-      ext = filename.split(".")[-1].lower()
-      mime = "image/png" if ext == "png" else "image/jpeg"
-      return f"data:{mime};base64,{encoded}"
-    except:
-      return None
-  return None
+  encoded, mime = cargar_recurso_visual(filename)
+  return f"data:{mime};base64,{encoded}" if encoded else None
+
+
+@st.cache_data(show_spinner=False)
+def cargar_recurso_visual(filename):
+  """Memoriza imágenes estáticas para que cada interacción no las vuelva a leer."""
+  if not filename or not os.path.exists(filename):
+    return "", ""
+  try:
+    with open(filename, "rb") as f:
+      encoded = base64.b64encode(f.read()).decode()
+    ext = filename.rsplit(".", 1)[-1].lower()
+    return encoded, "image/png" if ext == "png" else "image/jpeg"
+  except OSError:
+    return "", ""
 
 
 def buscar_logo_fuego():
@@ -201,10 +202,7 @@ logo_fuego_file = buscar_logo_fuego()
 logo_delante_file = buscar_logo_delante()
 logo_b64_inline = render_logo_inline_b64(logo_fuego_file) or ""
 
-bg_b64 = ""
-if os.path.exists("IMG_0753.jpeg"):
-  with open("IMG_0753.jpeg", "rb") as f:
-    bg_b64 = base64.b64encode(f.read()).decode()
+bg_b64, _ = cargar_recurso_visual("IMG_0753.jpeg")
 
 bg_css_login = (
     f"background: linear-gradient(rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.88)),"
@@ -994,6 +992,15 @@ def obtener_todos_votos_encuesta(encuesta_id):
 
 def sincronizar_historial_ensayos():
   """Cierra por reloj los ensayos vencidos y devuelve el historial disponible."""
+  ahora = datetime.datetime.now(ZoneInfo("Europe/Madrid"))
+  ciclo = informacion_ensayo(ahora)["ciclo_id"]
+  cache = st.session_state.get("_historial_ensayos_cache")
+  if (
+      cache
+      and cache.get("ciclo") == ciclo
+      and ahora - cache.get("consultado_en", ahora) < datetime.timedelta(seconds=60)
+  ):
+    return cache.get("historial", [])
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if not usar_almacenamiento_supabase(storage):
     return []
@@ -1006,7 +1013,11 @@ def sincronizar_historial_ensayos():
           cierre["ubicacion"],
           QUORUM_ENSAYO_MINIMO,
       )
-    return storage.obtener_historial_ensayos()
+    historial = storage.obtener_historial_ensayos()
+    st.session_state["_historial_ensayos_cache"] = {
+        "ciclo": ciclo, "consultado_en": ahora, "historial": historial,
+    }
+    return historial
   except SupabaseStorageOperationError:
     return []
 

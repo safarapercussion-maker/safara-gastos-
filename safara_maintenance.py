@@ -25,17 +25,22 @@ def _csv_bytes(records: list[dict[str, Any]]) -> bytes:
 
 
 def _create_financial_archive(snapshot: dict[str, list[dict[str, Any]]]) -> bytes:
+    files: dict[str, bytes] = {
+        f"{name}.csv": _csv_bytes(records) for name, records in snapshot.items()
+    }
     manifest = {
         "fecha": date.today().isoformat(),
         "contenido": {name: len(records) for name, records in snapshot.items()},
         "nota": "Copia administrativa; los tickets originales permanecen en Google Drive.",
+        "sha256_archivos": {
+            name: hashlib.sha256(payload).hexdigest()
+            for name, payload in files.items()
+        },
     }
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
-        for name, records in snapshot.items():
-            package.writestr(f"{name}.csv", _csv_bytes(records))
-        manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
-        manifest["sha256_manifest"] = hashlib.sha256(manifest_bytes).hexdigest()
+        for name, payload in files.items():
+            package.writestr(name, payload)
         package.writestr("MANIFIESTO.json", json.dumps(manifest, ensure_ascii=False, indent=2))
     return archive.getvalue()
 

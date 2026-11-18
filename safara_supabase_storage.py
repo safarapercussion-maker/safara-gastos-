@@ -172,6 +172,52 @@ class SupabaseSafaraStorage:
 
         return bool(self._run(callback))
 
+    def obtener_token_google_drive_cifrado(self) -> str:
+        """Devuelve el permiso cifrado de Drive, si una persona administradora lo autorizó."""
+        def callback(cursor):
+            cursor.execute(
+                "select token_cifrado from safara.google_drive_oauth where id = 1"
+            )
+            row = cursor.fetchone()
+            return str(row["token_cifrado"]) if row else ""
+
+        return str(self._run(callback) or "")
+
+    def guardar_token_google_drive_cifrado(self, token_cifrado: str, actor: str) -> None:
+        """Registra un permiso de Drive cifrado, solo tras comprobar administración en BD."""
+        if not token_cifrado:
+            raise SupabaseStorageOperationError("No se recibió el permiso seguro de Google.")
+
+        def callback(cursor):
+            cursor.execute(
+                """select id from safara.usuarios
+                   where lower(btrim(nombre)) = lower(btrim(%s)) and activo and rol = 'admin'""",
+                (actor,),
+            )
+            admin = cursor.fetchone()
+            if not admin:
+                raise SupabaseStorageOperationError(
+                    "Solo una persona administradora puede autorizar Google Drive."
+                )
+            cursor.execute(
+                """insert into safara.google_drive_oauth
+                   (id, token_cifrado, autorizado_por, actualizado_en)
+                   values (1, %s, %s, now())
+                   on conflict (id) do update set
+                     token_cifrado = excluded.token_cifrado,
+                     autorizado_por = excluded.autorizado_por,
+                     actualizado_en = now()""",
+                (token_cifrado, admin["id"]),
+            )
+            cursor.execute(
+                """insert into safara.auditoria (evento, usuario_id, detalle)
+                   values ('autorizacion_google_drive_actualizada', %s,
+                   'Permiso de Drive renovado de forma cifrada')""",
+                (admin["id"],),
+            )
+
+        self._run(callback)
+
     def _user_id(self, cursor, nombre: str):
         cursor.execute(
             """select id from safara.usuarios

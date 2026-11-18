@@ -136,7 +136,7 @@ class GoogleStorageConfig:
 class GoogleSafaraStorage:
     """Adaptador pequeño y deliberadamente explícito para los datos de SAFARA."""
 
-    def __init__(self, config: GoogleStorageConfig):
+    def __init__(self, config: GoogleStorageConfig, drive_credentials: Any | None = None):
         try:
             import gspread
             from google.oauth2.service_account import Credentials
@@ -159,7 +159,9 @@ class GoogleSafaraStorage:
             self._spreadsheet = gspread.authorize(credentials).open_by_key(
                 config.spreadsheet_id
             )
-            self._drive = build("drive", "v3", credentials=credentials, cache_discovery=False)
+            self._drive = build(
+                "drive", "v3", credentials=drive_credentials or credentials, cache_discovery=False
+            )
             self._folder_id = config.receipts_folder_id
         except Exception as error:
             raise StorageConfigurationError(

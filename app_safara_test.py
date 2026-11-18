@@ -38,6 +38,14 @@ from safara_google_storage import (
     is_enabled as google_storage_enabled,
     GoogleStorageConfig,
 )
+from safara_google_drive_oauth import (
+    GoogleDriveOAuthConfig,
+    GoogleDriveOAuthConfigurationError,
+    GoogleDriveOAuthOperationError,
+    authorization_url as google_drive_authorization_url,
+    credentials_from_encrypted_token,
+    exchange_code_for_encrypted_token,
+)
 from safara_supabase_storage import (
     SupabaseSafaraStorage,
     SupabaseStorageAuthenticationError,
@@ -522,16 +530,53 @@ def obtener_almacenamiento_drive():
   if _google_storage_error:
     return None
   try:
-    _google_storage = GoogleSafaraStorage(GoogleStorageConfig.from_secrets(st.secrets))
+    credenciales_drive = None
+    try:
+      oauth_config = GoogleDriveOAuthConfig.from_secrets(st.secrets)
+    except GoogleDriveOAuthConfigurationError as error:
+      if "safara_google_drive_oauth" in st.secrets:
+        _google_storage_error = str(error)
+        return None
+    else:
+      if not supabase_storage_enabled(st.secrets):
+        _google_storage_error = (
+            "La autorización de Drive necesita la base segura de pruebas activa."
+        )
+        return None
+      database = obtener_almacenamiento_google()
+      if not usar_almacenamiento_supabase(database):
+        _google_storage_error = (
+            "La autorización de Drive necesita la base segura de pruebas activa."
+        )
+        return None
+      token_cifrado = database.obtener_token_google_drive_cifrado()
+      if not token_cifrado:
+        _google_storage_error = (
+            "Google Drive aún no ha sido autorizado por una persona administradora."
+        )
+        return None
+      credenciales_drive = credentials_from_encrypted_token(oauth_config, token_cifrado)
+
+    _google_storage = GoogleSafaraStorage(
+        GoogleStorageConfig.from_secrets(st.secrets), drive_credentials=credenciales_drive
+    )
     # Las pestañas antiguas solo pertenecen al modo legado de Google como
     # almacenamiento. Con Supabase activo, Sheets recibe exclusivamente el
     # informe reducido y seguro definido por la integración de mantenimiento.
     if not supabase_storage_enabled(st.secrets):
       _google_storage.ensure_schema()
     return _google_storage
-  except StorageConfigurationError as error:
+  except (StorageConfigurationError, GoogleDriveOAuthOperationError,
+          SupabaseStorageOperationError) as error:
     _google_storage_error = str(error)
     return None
+
+
+def reiniciar_almacenamiento_drive():
+  """Fuerza a que el siguiente uso adopte una nueva autorización ya guardada."""
+  global _google_storage, _google_storage_error
+  _google_storage = None
+  _google_storage_error = ""
 
 
 def usar_almacenamiento_google():
@@ -2568,6 +2613,58 @@ with tab_admin_app:
     st.info("Esta sección está disponible solo para personas administradoras.")
   else:
     st.success("Acceso de Administración Autorizado")
+
+    st.markdown("#### Autorizar justificantes en Google Drive")
+    st.caption(
+        "Conecta una sola vez el Drive de SAFARA para que los tickets se guarden "
+        "con su propio espacio, sin usar la cuota de la cuenta técnica."
+    )
+    try:
+      configuracion_drive_oauth = GoogleDriveOAuthConfig.from_secrets(st.secrets)
+    except GoogleDriveOAuthConfigurationError:
+      st.info("La autorización de Drive se está preparando. No es necesaria ninguna acción todavía.")
+    else:
+      almacenamiento_seguro = obtener_almacenamiento_google()
+      if not usar_almacenamiento_supabase(almacenamiento_seguro):
+        st.warning("La base segura no está disponible; Drive no puede autorizarse todavía.")
+      else:
+        codigo_google = str(st.query_params.get("code", "")).strip()
+        estado_google = str(st.query_params.get("state", "")).strip()
+        if codigo_google or estado_google:
+          if not (codigo_google and estado_google):
+            st.error("Google no ha devuelto una autorización completa. Iníciala de nuevo.")
+          else:
+            try:
+              permiso_cifrado = exchange_code_for_encrypted_token(
+                  configuracion_drive_oauth, codigo_google, estado_google
+              )
+              almacenamiento_seguro.guardar_token_google_drive_cifrado(
+                  permiso_cifrado, usuario_actual
+              )
+              reiniciar_almacenamiento_drive()
+              st.query_params.clear()
+              registrar_auditoria("google_drive_autorizado", usuario_actual)
+              st.success("Google Drive ha quedado autorizado para guardar justificantes.")
+            except (GoogleDriveOAuthOperationError, SupabaseStorageOperationError) as error:
+              st.error(str(error))
+
+        try:
+          drive_autorizado = bool(
+              almacenamiento_seguro.obtener_token_google_drive_cifrado()
+          )
+        except SupabaseStorageOperationError:
+          drive_autorizado = False
+        if drive_autorizado:
+          st.success("Drive está autorizado y listo para guardar justificantes.")
+        else:
+          url_autorizacion = google_drive_authorization_url(configuracion_drive_oauth)
+          st.markdown(
+              f'<a href="{escapar_html(url_autorizacion)}" target="_self" '
+              'style="display:inline-block;background:#c62828;color:#ffffff;padding:10px 16px;'
+              'border-radius:8px;font-weight:700;text-decoration:none;">AUTORIZAR GOOGLE DRIVE</a>',
+              unsafe_allow_html=True,
+          )
+          st.caption("Inicia sesión con la cuenta que es propietaria de la carpeta de SAFARA.")
 
     st.markdown("#### Crear código de alta")
     st.caption(

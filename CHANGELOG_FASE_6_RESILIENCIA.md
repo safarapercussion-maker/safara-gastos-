@@ -10,6 +10,7 @@
 - Los justificantes de gasto reciben un identificador único independiente del orden de altas, evitando sobrescrituras de tickets si dos registros coinciden en fecha, importe o persona.
 - La validación de tickets distingue de forma segura un problema de permiso, de carpeta o de subida en Google Drive; nunca crea el gasto si falta su justificante.
 - La subida identifica también si una cuenta técnica carece de cuota propia en Drive y declara compatibilidad con unidades compartidas. Así evita atribuir ese límite de Google a un error del formulario o del gasto.
+- Se prepara la autorización de Drive en nombre de la cuenta propietaria. Su permiso renovable se cifra antes de persistirse y solo una persona administradora puede renovarlo desde el entorno de pruebas.
 
 ## Alcance
 

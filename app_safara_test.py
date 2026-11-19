@@ -488,11 +488,13 @@ _google_storage = None
 _google_storage_error = ""
 _supabase_storage = None
 _supabase_storage_error = ""
+_SUPABASE_BACKEND_VERSION = "2026-11-19-receipts-v2"
 
 
 @st.cache_resource(show_spinner=False)
-def crear_almacenamiento_supabase_compartido(database_url):
+def crear_almacenamiento_supabase_compartido(database_url, backend_version):
   """Reutiliza un grupo pequeño de conexiones para todas las sesiones activas."""
+  del backend_version  # Fuerza una instancia nueva y compatible tras cada despliegue relevante.
   return SupabaseSafaraStorage(SupabaseStorageConfig(database_url))
 
 
@@ -506,7 +508,9 @@ def obtener_almacenamiento_google():
       return None
     try:
       config = SupabaseStorageConfig.from_secrets(st.secrets)
-      _supabase_storage = crear_almacenamiento_supabase_compartido(config.database_url)
+      _supabase_storage = crear_almacenamiento_supabase_compartido(
+          config.database_url, _SUPABASE_BACKEND_VERSION
+      )
       return _supabase_storage
     except SupabaseStorageConfigurationError as error:
       _supabase_storage_error = str(error)
@@ -587,7 +591,32 @@ def usar_almacenamiento_google():
 
 
 def usar_almacenamiento_supabase(storage=None):
-  return isinstance(storage or obtener_almacenamiento_google(), SupabaseSafaraStorage)
+  candidato = storage if storage is not None else obtener_almacenamiento_google()
+  # Streamlit puede conservar recursos entre despliegues. El nombre estable
+  # evita que una instancia válida de la versión anterior se confunda con
+  # Google por cambiar la identidad interna de la clase Python.
+  return getattr(candidato.__class__, "__name__", "") == "SupabaseSafaraStorage"
+
+
+def diagnostico_supabase_para_administracion():
+  """Devuelve un estado seguro y concreto, sin revelar ningún secreto."""
+  if not supabase_storage_enabled(st.secrets):
+    return None, (
+        "Supabase no está activado en los secretos de esta aplicación de pruebas. "
+        "No se iniciará Google Drive ni se usarán rutas antiguas."
+    )
+  almacenamiento = obtener_almacenamiento_google()
+  if not usar_almacenamiento_supabase(almacenamiento):
+    return None, _supabase_storage_error or (
+        "La conexión privada de Supabase no se ha podido preparar."
+    )
+  try:
+    almacenamiento.verificar_conexion_segura()
+  except SupabaseStorageAuthenticationError:
+    return None, "La contraseña privada de Supabase no coincide con la conexión guardada."
+  except SupabaseStorageOperationError:
+    return None, "No se puede contactar ahora con la base segura de Supabase."
+  return almacenamiento, ""
 
 
 def actualizar_informes_y_copias_en_segundo_plano():
@@ -1297,6 +1326,8 @@ def guardar_gastos_persistentes():
   if storage:
     if usar_almacenamiento_supabase(storage):
       return True
+    if not hasattr(storage, "replace_records"):
+      return False
     try:
       storage.replace_records("Gastos", st.session_state.gastos.to_dict(orient="records"))
       return True
@@ -2570,17 +2601,14 @@ with tab_gastos_app:
             except SupabaseStorageOperationError:
               gasto_guardado = False
           else:
-            # Compatibilidad con el modo local histórico, nunca usado cuando
-            # la base segura está activada.
-            path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
-            with open(path_destino, "wb") as archivo_local:
-              archivo_local.write(contenido_fichero)
-            nuevo_reg["Enlace Ticket"] = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
-            st.session_state.gastos = pd.concat(
-                [st.session_state.gastos, pd.DataFrame([nuevo_reg])],
-                ignore_index=True,
+            # En pruebas, un gasto nunca puede caer en el guardado histórico.
+            # Si la base segura no está lista, no se registra ni se pierde un
+            # archivo local que pudiera dar una falsa sensación de éxito.
+            st.error(
+                "No se ha registrado el gasto: la base segura de Supabase no está disponible. "
+                "La administración debe revisar el diagnóstico de conexión."
             )
-            gasto_guardado = guardar_gastos_persistentes()
+            st.stop()
           if gasto_guardado:
             if usar_almacenamiento_supabase(storage):
               almacenamiento_drive = (
@@ -2623,8 +2651,6 @@ with tab_gastos_app:
             )
             st.info(aviso_justificante)
           else:
-            if not usar_almacenamiento_supabase(storage):
-              st.session_state.gastos = st.session_state.gastos.iloc[:-1]
             st.error("No se ha podido guardar el gasto. Inténtalo de nuevo.")
 
   with tab_sub_hist:
@@ -2711,12 +2737,9 @@ with tab_admin_app:
     except GoogleDriveOAuthConfigurationError:
       st.info("La autorización de Drive se está preparando. No es necesaria ninguna acción todavía.")
     else:
-      almacenamiento_seguro = obtener_almacenamiento_google()
-      if not usar_almacenamiento_supabase(almacenamiento_seguro):
-        st.error(
-            _supabase_storage_error
-            or "La base segura no está disponible; Drive no puede autorizarse todavía."
-        )
+      almacenamiento_seguro, error_supabase = diagnostico_supabase_para_administracion()
+      if not almacenamiento_seguro:
+        st.error(error_supabase)
       else:
         codigo_google = str(st.query_params.get("code", "")).strip()
         estado_google = str(st.query_params.get("state", "")).strip()

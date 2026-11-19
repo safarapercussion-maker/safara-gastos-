@@ -171,6 +171,15 @@ class SupabaseSafaraStorage:
             # recuperar la conexión de forma normal.
             raise failure from error
 
+    def verificar_conexion_segura(self) -> bool:
+        """Comprueba la conexión privada antes de habilitar operaciones críticas."""
+        def callback(cursor):
+            cursor.execute("select 1 as listo")
+            row = cursor.fetchone()
+            return bool(row and row.get("listo") == 1)
+
+        return bool(self._run(callback))
+
     def actualizar_rol_usuario(self, objetivo: str, nuevo_rol: str, actor: str) -> bool:
         """Concede o retira administración con controles dentro de la transacción."""
         if nuevo_rol not in {"admin", "usuario"}:

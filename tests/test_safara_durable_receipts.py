@@ -25,6 +25,18 @@ class DurableReceiptTests(unittest.TestCase):
         self.assertLess(saved, uploaded)
         self.assertIn("REINTENTAR JUSTIFICANTES PENDIENTES", APP_SOURCE)
 
+    def test_ticket_form_never_falls_back_to_the_legacy_writer(self):
+        ticket_form = APP_SOURCE.split('with tab_sub_reg:', 1)[1].split(
+            'with tab_sub_hist:', 1
+        )[0]
+        self.assertNotIn("guardar_gastos_persistentes()", ticket_form)
+        self.assertIn("la base segura de Supabase no está disponible", ticket_form)
+
+    def test_supabase_detection_survives_a_streamlit_code_reload(self):
+        self.assertIn("_SUPABASE_BACKEND_VERSION", APP_SOURCE)
+        self.assertIn('"__name__", "") == "SupabaseSafaraStorage"', APP_SOURCE)
+        self.assertIn("diagnostico_supabase_para_administracion", APP_SOURCE)
+
     def test_drive_does_not_initialize_sheets(self):
         start = STORAGE_SOURCE.index("def _drive_client")
         end = STORAGE_SOURCE.index("def crear_carpeta_justificantes_propietaria", start)

@@ -48,6 +48,20 @@ class BootSequenceTests(unittest.TestCase):
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", section)
         self.assertIn("mantenimiento_google_comprobado", section)
 
+    def test_admin_status_is_safe_when_a_previous_cached_connection_is_present(self):
+        marker = "# Estado breve y seguro: ayuda a comprobar el circuito completo"
+        section = APP_SOURCE.split(marker, 1)[1].split("if estado_google:", 1)[0]
+        self.assertIn('getattr(estado_seguro, "estado_mantenimiento_google", None)', section)
+        self.assertIn("except (AttributeError, SupabaseStorageOperationError):", section)
+
+    def test_supabase_cache_key_tracks_the_backend_source(self):
+        marker = "def version_backend_supabase():"
+        section = APP_SOURCE.split(marker, 1)[1].split(
+            "@st.cache_resource", 1
+        )[0]
+        self.assertIn("safara_supabase_storage.py", section)
+        self.assertIn("os.stat(source).st_mtime_ns", section)
+
     def test_vote_read_is_safe_during_an_external_return(self):
         marker = "def obtener_todos_votos_encuesta(encuesta_id):"
         section = APP_SOURCE.split(marker, 1)[1].split("def sincronizar_historial_ensayos", 1)[0]

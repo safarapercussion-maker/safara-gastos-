@@ -55,7 +55,8 @@ class DurableReceiptTests(unittest.TestCase):
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", vote_handler)
 
     def test_supabase_detection_survives_a_streamlit_code_reload(self):
-        self.assertIn("_SUPABASE_BACKEND_VERSION", APP_SOURCE)
+        self.assertIn("version_backend_supabase", APP_SOURCE)
+        self.assertIn("safara_supabase_storage.py", APP_SOURCE)
         self.assertIn('"__name__", "") == "SupabaseSafaraStorage"', APP_SOURCE)
         self.assertIn("diagnostico_supabase_para_administracion", APP_SOURCE)
 

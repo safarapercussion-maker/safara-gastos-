@@ -475,20 +475,24 @@ hoy_m = datetime.datetime.now(ZoneInfo("Europe/Madrid")).date()
 ciclo_actual = obtener_ciclo_semanal_actual()
 
 
-def sincronizacion_google_habilitada():
-  """Evita conexiones externas salvo autorización explícita en Secrets."""
-  try:
-    value = st.secrets.get("enable_google_sheets_sync", False)
-  except Exception:
-    return False
-  return value is True or str(value).strip().lower() in {"true", "1", "si", "sí"}
-
-
 _google_storage = None
 _google_storage_error = ""
 _supabase_storage = None
 _supabase_storage_error = ""
-_SUPABASE_BACKEND_VERSION = "2026-11-19-receipts-v2"
+
+
+def version_backend_supabase():
+  """Cambia la clave de caché si se publica una nueva conexión compatible.
+
+  Streamlit reutiliza recursos entre recargas para dar rapidez. La identidad se
+  calcula con el archivo del adaptador, de modo que una mejora de Supabase no
+  puede dejar en memoria una instancia anterior sin sus métodos nuevos.
+  """
+  try:
+    source = os.path.join(os.path.dirname(__file__), "safara_supabase_storage.py")
+    return str(os.stat(source).st_mtime_ns)
+  except OSError:
+    return "supabase-safe-v1"
 
 
 @st.cache_resource(show_spinner=False)
@@ -509,7 +513,7 @@ def obtener_almacenamiento_google():
     try:
       config = SupabaseStorageConfig.from_secrets(st.secrets)
       _supabase_storage = crear_almacenamiento_supabase_compartido(
-          config.database_url, _SUPABASE_BACKEND_VERSION
+          config.database_url, version_backend_supabase()
       )
       return _supabase_storage
     except SupabaseStorageConfigurationError as error:
@@ -2804,10 +2808,9 @@ with tab_admin_app:
     # mostrar URLs privadas, tokens ni mensajes técnicos del proveedor.
     try:
       estado_seguro, _ = diagnostico_supabase_para_administracion()
-      estado_google = (
-          estado_seguro.estado_mantenimiento_google() if estado_seguro else {}
-      )
-    except SupabaseStorageOperationError:
+      obtener_estado_google = getattr(estado_seguro, "estado_mantenimiento_google", None)
+      estado_google = obtener_estado_google() if callable(obtener_estado_google) else {}
+    except (AttributeError, SupabaseStorageOperationError):
       estado_google = {}
     if estado_google:
       informes_pendientes = (

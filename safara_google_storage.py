@@ -390,7 +390,10 @@ class GoogleSafaraStorage:
                 f"'{self._folder_id}' in parents and trashed = false"
             )
             drive = self._drive_client()
-            found = drive.files().list(q=query, fields="files(id)").execute().get("files", [])
+            found = drive.files().list(
+                q=query, fields="files(id)", supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            ).execute().get("files", [])
             if found:
                 backup_folder_id = found[0]["id"]
             else:
@@ -401,6 +404,7 @@ class GoogleSafaraStorage:
                         "parents": [self._folder_id],
                     },
                     fields="id",
+                    supportsAllDrives=True,
                 ).execute()
                 backup_folder_id = folder["id"]
             existing = drive.files().list(

@@ -745,6 +745,49 @@ class SupabaseSafaraStorage:
             )
         self._run(callback)
 
+    def confirmar_informes_google(self, revision_sincronizada: int) -> None:
+        """Confirma Sheets antes de intentar la copia adicional de Drive.
+
+        Los informes son una vista de consulta. Si la copia diaria tuviera una
+        incidencia, no debe dejar a la administración sin poder ver los gastos
+        que ya se sincronizaron correctamente.
+        """
+        def callback(cursor):
+            cursor.execute(
+                """update safara.mantenimiento
+                   set sheets_synced_revision = greatest(sheets_synced_revision, %s),
+                       actualizado_en = now()
+                   where clave = 'integracion_google'""",
+                (revision_sincronizada,),
+            )
+        self._run(callback)
+
+    def fallar_respaldo_google(self, error: str) -> None:
+        """Deja pendiente solo la copia de respaldo, nunca los informes."""
+        def callback(cursor):
+            cursor.execute(
+                """update safara.mantenimiento
+                   set bloqueado_hasta = null, proximo_intento_en = now() + interval '5 minutes',
+                       ultimo_error = %s, actualizado_en = now()
+                   where clave = 'integracion_google'""",
+                (error[:1000],),
+            )
+        try:
+            self._run(callback)
+        except SupabaseStorageOperationError:
+            return
+
+    def estado_mantenimiento_google(self) -> dict[str, Any]:
+        """Estado seguro para administración; no devuelve credenciales ni rutas privadas."""
+        def callback(cursor):
+            cursor.execute(
+                """select sheets_revision, sheets_synced_revision, ultimo_respaldo,
+                          proximo_intento_en, ultimo_error, actualizado_en
+                   from safara.mantenimiento where clave = 'integracion_google'"""
+            )
+            return cursor.fetchone() or {}
+        return dict(self._run(callback))
+
     def fallar_mantenimiento_google(self, error: str) -> None:
         def callback(cursor):
             cursor.execute(

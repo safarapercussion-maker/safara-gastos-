@@ -43,6 +43,17 @@ class DurableReceiptTests(unittest.TestCase):
         self.assertIn("recupera también cualquier actualización que", admin_panel)
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", admin_panel)
 
+    def test_admin_recovers_protected_receipts_without_a_manual_upload(self):
+        admin_panel = APP_SOURCE.split("with tab_admin_app:", 1)[1]
+        self.assertIn("reintentar_justificantes_pendientes_sin_interrumpir", admin_panel)
+        self.assertIn("Se han enviado automáticamente", admin_panel)
+
+    def test_votes_request_an_isolated_google_report_refresh(self):
+        vote_handler = APP_SOURCE.split("def registrar_voto_backend", 1)[1].split(
+            "def obtener_voto_usuario", 1
+        )[0]
+        self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", vote_handler)
+
     def test_supabase_detection_survives_a_streamlit_code_reload(self):
         self.assertIn("_SUPABASE_BACKEND_VERSION", APP_SOURCE)
         self.assertIn('"__name__", "") == "SupabaseSafaraStorage"', APP_SOURCE)

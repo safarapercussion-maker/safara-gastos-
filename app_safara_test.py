@@ -635,6 +635,42 @@ def actualizar_informes_y_copias_en_segundo_plano():
     return False
 
 
+def reintentar_justificantes_pendientes_sin_interrumpir(database):
+  """Reintenta tickets ya protegidos sin afectar a la sesión ni al gasto."""
+  if not usar_almacenamiento_supabase(database):
+    return 0
+  try:
+    pendientes = database.listar_justificantes_pendientes()
+    if not pendientes:
+      return 0
+    drive = obtener_almacenamiento_drive()
+    if not drive:
+      return 0
+  except (StorageOperationError, SupabaseStorageOperationError):
+    return 0
+
+  completados = 0
+  for pendiente in pendientes:
+    try:
+      archivo = database.obtener_justificante_pendiente(int(pendiente["gasto_id"]))
+      if not archivo:
+        continue
+      drive_file_id, enlace = drive.upload_receipt(
+          str(archivo["nombre_fichero"]), bytes(archivo["contenido"]),
+          str(archivo.get("mime_type") or "application/octet-stream"),
+      )
+      database.confirmar_justificante_drive(
+          int(pendiente["gasto_id"]), drive_file_id, enlace
+      )
+      completados += 1
+    except (StorageOperationError, SupabaseStorageOperationError) as error:
+      try:
+        database.marcar_justificante_pendiente(int(pendiente["gasto_id"]), str(error))
+      except SupabaseStorageOperationError:
+        pass
+  return completados
+
+
 # Los informes se actualizan al terminar acciones que cambian datos. El bloqueo
 # temporal de Supabase evita que varias personas lancen la misma copia a la vez.
 
@@ -1002,6 +1038,7 @@ def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
     return False
   registrar_voto_en_sheets_cloud(encuesta_id, usuario_id, respuesta)
   registrar_auditoria("voto_actualizado", usuario_id, encuesta_id)
+  actualizar_informes_y_copias_en_segundo_plano()
   return True
 
 
@@ -1875,6 +1912,7 @@ if not st.session_state.usuario_autenticado:
             else:
               st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
               registrar_auditoria("alta_usuario", nombre_limpio, nuevo_usuario["rol"])
+              actualizar_informes_y_copias_en_segundo_plano()
               st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
           else:
             st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
@@ -2751,6 +2789,29 @@ with tab_admin_app:
     # de publicar esta mejora), sin exigir otro registro de prueba.
     actualizar_informes_y_copias_en_segundo_plano()
 
+    # Estado breve y seguro: ayuda a comprobar el circuito completo sin
+    # mostrar URLs privadas, tokens ni mensajes técnicos del proveedor.
+    try:
+      estado_seguro, _ = diagnostico_supabase_para_administracion()
+      estado_google = (
+          estado_seguro.estado_mantenimiento_google() if estado_seguro else {}
+      )
+    except SupabaseStorageOperationError:
+      estado_google = {}
+    if estado_google:
+      informes_pendientes = (
+          int(estado_google.get("sheets_revision", 0))
+          != int(estado_google.get("sheets_synced_revision", 0))
+      )
+      columnas_estado = st.columns(3)
+      columnas_estado[0].metric("Base segura", "ACTIVA")
+      columnas_estado[1].metric(
+          "Informes Google", "PENDIENTES" if informes_pendientes else "ACTUALIZADOS"
+      )
+      columnas_estado[2].metric(
+          "Copia Drive", "PENDIENTE" if estado_google.get("ultimo_error") else "AL DÍA"
+      )
+
     st.markdown("#### Autorizar justificantes en Google Drive")
     st.caption(
         "Conecta una sola vez el Drive de SAFARA para que los tickets se guarden "
@@ -2832,6 +2893,14 @@ with tab_admin_app:
           )
 
         if drive_autorizado:
+          reenviados_automaticamente = reintentar_justificantes_pendientes_sin_interrumpir(
+              almacenamiento_seguro
+          )
+          if reenviados_automaticamente:
+            actualizar_informes_y_copias_en_segundo_plano()
+            st.info(
+                f"Se han enviado automáticamente {reenviados_automaticamente} justificante(s) pendiente(s)."
+            )
           try:
             justificantes_pendientes = almacenamiento_seguro.listar_justificantes_pendientes()
           except SupabaseStorageOperationError:
@@ -2841,27 +2910,11 @@ with tab_admin_app:
                 f"Hay {len(justificantes_pendientes)} justificante(s) protegidos pendientes de Drive."
             )
             if st.button("REINTENTAR JUSTIFICANTES PENDIENTES"):
-              almacenamiento_drive = obtener_almacenamiento_drive()
-              completados = 0
-              for pendiente in justificantes_pendientes:
-                try:
-                  archivo = almacenamiento_seguro.obtener_justificante_pendiente(
-                      int(pendiente["gasto_id"])
-                  )
-                  if not archivo or not almacenamiento_drive:
-                    raise StorageOperationError("Drive no está disponible todavía.")
-                  drive_file_id, enlace = almacenamiento_drive.upload_receipt(
-                      str(archivo["nombre_fichero"]), bytes(archivo["contenido"]),
-                      str(archivo.get("mime_type") or "application/octet-stream"),
-                  )
-                  almacenamiento_seguro.confirmar_justificante_drive(
-                      int(pendiente["gasto_id"]), drive_file_id, enlace
-                  )
-                  completados += 1
-                except (StorageOperationError, SupabaseStorageOperationError) as error:
-                  almacenamiento_seguro.marcar_justificante_pendiente(
-                      int(pendiente["gasto_id"]), str(error)
-                  )
+              completados = reintentar_justificantes_pendientes_sin_interrumpir(
+                  almacenamiento_seguro
+              )
+              if completados:
+                actualizar_informes_y_copias_en_segundo_plano()
               st.success(f"Justificantes enviados a Drive: {completados}.")
               st.rerun()
 

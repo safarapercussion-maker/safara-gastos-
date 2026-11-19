@@ -63,11 +63,20 @@ def run_google_maintenance(
             "Origen": "SAFARA GASTOS — pruebas",
         }]
         google.write_report_snapshot(reports)
+        # Desde este punto los informes ya están actualizados. La copia diaria
+        # de Drive es una protección adicional y no puede deshacer Sheets.
+        database.confirmar_informes_google(int(work["sheets_revision"]))
         backup_done = False
         if work["respaldo_pendiente"]:
-            archive = _create_financial_archive(database.obtener_archivo_financiero())
-            google.upload_backup(f"SAFARA_GASTOS_{date.today().isoformat()}.zip", archive)
-            backup_done = True
+            try:
+                archive = _create_financial_archive(database.obtener_archivo_financiero())
+                google.upload_backup(f"SAFARA_GASTOS_{date.today().isoformat()}.zip", archive)
+                backup_done = True
+            except Exception as error:
+                database.fallar_respaldo_google(
+                    str(error) or "No se pudo guardar la copia adicional de Drive."
+                )
+                return True
         database.terminar_mantenimiento_google(int(work["sheets_revision"]), backup_done)
         return True
     except Exception as error:

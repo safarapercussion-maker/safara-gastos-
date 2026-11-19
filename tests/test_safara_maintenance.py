@@ -16,6 +16,8 @@ class FakeDatabase:
         } if work == "DEFAULT" else work
         self.finished = []
         self.failed = []
+        self.confirmed_reports = []
+        self.failed_backups = []
 
     def iniciar_mantenimiento_google(self):
         return self.work
@@ -35,6 +37,12 @@ class FakeDatabase:
 
     def terminar_mantenimiento_google(self, revision, backup):
         self.finished.append((revision, backup))
+
+    def confirmar_informes_google(self, revision):
+        self.confirmed_reports.append(revision)
+
+    def fallar_respaldo_google(self, error):
+        self.failed_backups.append(error)
 
     def fallar_mantenimiento_google(self, error):
         self.failed.append(error)
@@ -81,9 +89,29 @@ class MaintenanceTests(unittest.TestCase):
         google = FakeGoogle()
         self.assertTrue(run_google_maintenance(database, google))
         self.assertEqual(database.finished, [(4, True)])
+        self.assertEqual(database.confirmed_reports, [4])
         self.assertEqual(database.failed, [])
         self.assertIn("Informe Sincronización", google.reports)
         self.assertEqual(len(google.backups), 1)
+
+    def test_report_sync_succeeds_when_the_optional_drive_backup_fails(self):
+        class BackupUnavailableGoogle(FakeGoogle):
+            def upload_backup(self, filename, content):
+                raise RuntimeError("Drive no disponible")
+
+        database = FakeDatabase()
+        google = BackupUnavailableGoogle()
+        self.assertTrue(run_google_maintenance(database, google))
+        self.assertEqual(database.confirmed_reports, [4])
+        self.assertEqual(database.finished, [])
+        self.assertEqual(len(database.failed_backups), 1)
+        self.assertIsNotNone(google.reports)
+
+    def test_report_is_confirmed_before_the_optional_backup(self):
+        database = FakeDatabase()
+        run_google_maintenance(database, FakeGoogle())
+        self.assertEqual(database.confirmed_reports, [4])
+        self.assertEqual(database.finished, [(4, True)])
 
     def test_maintenance_treats_google_as_an_isolated_copy(self):
         class BrokenGoogle(FakeGoogle):

@@ -47,6 +47,7 @@ class BootSequenceTests(unittest.TestCase):
         )[0]
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", section)
         self.assertIn("mantenimiento_google_comprobado", section)
+        self.assertIn("version_mantenimiento_google = version_backend_supabase()", section)
 
     def test_admin_status_is_safe_when_a_previous_cached_connection_is_present(self):
         marker = "# Estado breve y seguro: ayuda a comprobar el circuito completo"

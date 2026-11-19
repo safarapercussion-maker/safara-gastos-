@@ -1943,12 +1943,13 @@ if not st.session_state.usuario_autenticado:
 # ==============================================================================
 usuario_actual = st.session_state.usuario_autenticado
 
-# Una vez por sesión, cualquier acceso válido comprueba si hay una vista de
-# Google pendiente. No se limita a Administración: así un gasto confirmado
-# antes de una actualización se recupera al siguiente inicio de sesión y no
-# depende de que alguien recuerde pulsar un botón concreto.
-if not st.session_state.get("mantenimiento_google_comprobado", False):
-  st.session_state.mantenimiento_google_comprobado = True
+# Una vez por sesión y también una vez por cada despliegue, cualquier acceso
+# válido comprueba si hay una vista de Google pendiente. No se limita a
+# Administración: así un gasto confirmado antes de una actualización se
+# recupera sin exigir cerrar sesión ni pulsar un botón concreto.
+version_mantenimiento_google = version_backend_supabase()
+if st.session_state.get("mantenimiento_google_comprobado") != version_mantenimiento_google:
+  st.session_state.mantenimiento_google_comprobado = version_mantenimiento_google
   actualizar_informes_y_copias_en_segundo_plano()
 
 hoy_act = datetime.datetime.now(ZoneInfo("Europe/Madrid")).date()

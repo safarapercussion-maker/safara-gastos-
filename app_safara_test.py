@@ -1673,6 +1673,7 @@ if not st.session_state.usuario_autenticado:
     if usuario_retorno and es_administrador(usuario_retorno):
       st.session_state.usuario_autenticado = usuario_retorno
       st.session_state.ultimo_acceso = datetime.datetime.now()
+      st.session_state.pop("mantenimiento_google_comprobado", None)
       # El primer pase se inició antes de recuperar la sesión: se reinicia para
       # cargar los datos de trabajo en el orden normal y sin destellos ni fallos.
       st.rerun()
@@ -1734,6 +1735,7 @@ if not st.session_state.usuario_autenticado:
         ):
           st.session_state.usuario_autenticado = nombre_login
           st.session_state.ultimo_acceso = datetime.datetime.now()
+          st.session_state.pop("mantenimiento_google_comprobado", None)
           st.session_state.fallos_acceso = 0
           st.session_state.bloqueado_hasta = None
           registrar_auditoria("inicio_sesion", nombre_login)
@@ -1936,6 +1938,15 @@ if not st.session_state.usuario_autenticado:
 # --- APLICACIÓN PRINCIPAL (POST-LOGIN) ----------------------------------------
 # ==============================================================================
 usuario_actual = st.session_state.usuario_autenticado
+
+# Una vez por sesión, cualquier acceso válido comprueba si hay una vista de
+# Google pendiente. No se limita a Administración: así un gasto confirmado
+# antes de una actualización se recupera al siguiente inicio de sesión y no
+# depende de que alguien recuerde pulsar un botón concreto.
+if not st.session_state.get("mantenimiento_google_comprobado", False):
+  st.session_state.mantenimiento_google_comprobado = True
+  actualizar_informes_y_copias_en_segundo_plano()
+
 hoy_act = datetime.datetime.now(ZoneInfo("Europe/Madrid")).date()
 
 primer_bolo_conf = None

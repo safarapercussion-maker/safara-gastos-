@@ -89,11 +89,32 @@ def _as_plain_dict(value: Any) -> dict[str, Any]:
 
 
 def is_enabled(secrets: Any) -> bool:
+    """Activa la vista de Google cuando existe una configuración completa.
+
+    La primera implantación pedía un interruptor adicional. Eso hacía posible
+    tener correctamente guardada la hoja y la cuenta de servicio, pero que los
+    informes nunca se intentaran enviar. El interruptor explícito se mantiene
+    para poder desactivar la integración de forma intencionada; si no existe,
+    la propia configuración de Google expresa esa intención.
+    """
     try:
-        value = secrets.get("enable_google_sheets_sync", False)
+        value = secrets.get("enable_google_sheets_sync", None)
     except (AttributeError, TypeError):
         return False
-    return value is True or str(value).strip().lower() in {"true", "1", "si", "sí"}
+    if value is not None:
+        return value is True or str(value).strip().lower() in {"true", "1", "si", "sí"}
+
+    try:
+        storage = _as_plain_dict(secrets.get("safara_google_storage", {}))
+        has_sheet = bool(str(storage.get("spreadsheet_id", "")).strip())
+        has_folder = bool(str(storage.get("receipts_folder_id", "")).strip())
+        has_service_account = bool(
+            str(secrets.get("gcp_service_account_json", "")).strip()
+            or secrets.get("gcp_service_account")
+        )
+    except (AttributeError, TypeError):
+        return False
+    return has_sheet and has_folder and has_service_account
 
 
 @dataclass(frozen=True)

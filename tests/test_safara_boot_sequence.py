@@ -40,6 +40,14 @@ class BootSequenceTests(unittest.TestCase):
         )[0]
         self.assertIn("st.rerun()", section)
 
+    def test_login_checks_pending_google_reports_without_opening_admin(self):
+        marker = "usuario_actual = st.session_state.usuario_autenticado"
+        section = APP_SOURCE.split(marker, 1)[1].split(
+            'hoy_act = datetime.datetime.now', 1
+        )[0]
+        self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", section)
+        self.assertIn("mantenimiento_google_comprobado", section)
+
     def test_vote_read_is_safe_during_an_external_return(self):
         marker = "def obtener_todos_votos_encuesta(encuesta_id):"
         section = APP_SOURCE.split(marker, 1)[1].split("def sincronizar_historial_ensayos", 1)[0]

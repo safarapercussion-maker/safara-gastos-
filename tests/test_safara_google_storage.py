@@ -10,6 +10,15 @@ class GoogleStorageConfigTests(unittest.TestCase):
     self.assertTrue(is_enabled({"enable_google_sheets_sync": "sí"}))
     self.assertFalse(is_enabled({"enable_google_sheets_sync": False}))
 
+  def test_uses_the_saved_google_configuration_when_no_extra_switch_exists(self):
+    self.assertTrue(is_enabled({
+        "safara_google_storage": {
+            "spreadsheet_id": "1wywxlZ2Uju-EKIK9B7QJ-x1X2AFGS_qGf7HTDIHccvk",
+            "receipts_folder_id": "1cv0RifxRqrkiB916A6gXnMuFrKSYWTK7",
+        },
+        "gcp_service_account": {"type": "service_account"},
+    }))
+
   def test_accepts_complete_service_account_configuration(self):
     config = GoogleStorageConfig.from_secrets({
         "safara_google_storage": {

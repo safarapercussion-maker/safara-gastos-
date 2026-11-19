@@ -1007,7 +1007,10 @@ def obtener_voto_usuario(encuesta_id, usuario_id):
       else informacion_ensayo()["ciclo_id"] if str(encuesta_id) == "ensayo_proximo"
       else ciclo_actual
   )
-  df = st.session_state.votos_historial
+  df = st.session_state.get(
+      "votos_historial",
+      pd.DataFrame(columns=["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"]),
+  )
   if df.empty:
     return None
   res = df[
@@ -1027,7 +1030,12 @@ def obtener_todos_votos_encuesta(encuesta_id):
       else informacion_ensayo()["ciclo_id"] if str(encuesta_id) == "ensayo_proximo"
       else ciclo_actual
   )
-  df = st.session_state.votos_historial
+  # Un retorno externo (OAuth) puede reconstruir la sesión en un rerun. Este
+  # acceso defensivo garantiza que una encuesta vacía nunca derribe el panel.
+  df = st.session_state.get(
+      "votos_historial",
+      pd.DataFrame(columns=["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"]),
+  )
   if df.empty:
     return pd.DataFrame()
   return df[
@@ -1623,6 +1631,9 @@ if not st.session_state.usuario_autenticado:
     if usuario_retorno and es_administrador(usuario_retorno):
       st.session_state.usuario_autenticado = usuario_retorno
       st.session_state.ultimo_acceso = datetime.datetime.now()
+      # El primer pase se inició antes de recuperar la sesión: se reinicia para
+      # cargar los datos de trabajo en el orden normal y sin destellos ni fallos.
+      st.rerun()
 
 if st.session_state.usuario_autenticado:
   ahora = datetime.datetime.now()

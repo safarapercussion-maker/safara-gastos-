@@ -33,6 +33,18 @@ class BootSequenceTests(unittest.TestCase):
         )[0]
         self.assertNotIn("guardar_actuaciones_excel()", section)
 
+    def test_google_return_reloads_after_restoring_the_session(self):
+        marker = "st.session_state.usuario_autenticado = usuario_retorno"
+        section = APP_SOURCE.split(marker, 1)[1].split(
+            "if st.session_state.usuario_autenticado:", 1
+        )[0]
+        self.assertIn("st.rerun()", section)
+
+    def test_vote_read_is_safe_during_an_external_return(self):
+        marker = "def obtener_todos_votos_encuesta(encuesta_id):"
+        section = APP_SOURCE.split(marker, 1)[1].split("def sincronizar_historial_ensayos", 1)[0]
+        self.assertIn('st.session_state.get(\n      "votos_historial"', section)
+
 
 if __name__ == "__main__":
     unittest.main()

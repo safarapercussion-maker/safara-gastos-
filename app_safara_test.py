@@ -737,6 +737,14 @@ def reiniciar_estado_si_cambia_backend():
 
 reiniciar_estado_si_cambia_backend()
 
+# La navegación se conoce antes de cargar datos remotos. Así el primer acceso
+# solo prepara la sección de inicio y nunca toda la aplicación.
+if (
+    st.session_state.get("usuario_autenticado")
+    and "seccion_principal_safara" not in st.session_state
+):
+  st.session_state.seccion_principal_safara = "Nuestras Movidas"
+
 
 def usuario_autenticado_en_sesion():
   """Evita cargar módulos de trabajo antes de que exista una sesión válida."""
@@ -792,11 +800,26 @@ def registrar_auditoria(evento, usuario="", detalle=""):
   except OSError:
     pass
 
+
+@st.cache_resource(show_spinner=False)
+def obtener_ejecutor_auditoria():
+  """Evita que los eventos administrativos retrasen el acceso de una persona."""
+  return ThreadPoolExecutor(max_workers=1, thread_name_prefix="safara-auditoria")
+
+
+def registrar_auditoria_en_segundo_plano(evento, usuario="", detalle=""):
+  """Agenda auditoría no crítica para la respuesta visual, sin perder seguridad."""
+  obtener_ejecutor_auditoria().submit(registrar_auditoria, evento, usuario, detalle)
+
 # --- INICIALIZACIÓN DE VOTOS ---
 # Los datos de trabajo no son necesarios para identificar a una persona. Cargarlos
 # antes del acceso multiplicaba consultas y mostraba fallos de infraestructura en
 # la pantalla pública. Se inicializan en el primer rerun posterior al acceso.
-if "votos_historial" not in st.session_state and usuario_autenticado_en_sesion():
+if (
+    "votos_historial" not in st.session_state
+    and usuario_autenticado_en_sesion()
+    and st.session_state.get("seccion_principal_safara") in {"Nuestras Movidas", "Agenda & Bolos"}
+):
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
     try:
@@ -1294,11 +1317,19 @@ def cargar_actuaciones_desde_fuentes():
   return acts
 
 
-if "actuaciones" not in st.session_state and usuario_autenticado_en_sesion():
+if (
+    "actuaciones" not in st.session_state
+    and usuario_autenticado_en_sesion()
+    and st.session_state.get("seccion_principal_safara") in {"Agenda & Bolos", "Administración"}
+):
   st.session_state.actuaciones = cargar_actuaciones_desde_fuentes()
 
 # --- CONFESIONARIO PERSISTENTE ---
-if "confesionario_mensajes" not in st.session_state and usuario_autenticado_en_sesion():
+if (
+    "confesionario_mensajes" not in st.session_state
+    and usuario_autenticado_en_sesion()
+    and st.session_state.get("seccion_principal_safara") == "Administración"
+):
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
     try:
@@ -1315,6 +1346,15 @@ if "confesionario_mensajes" not in st.session_state and usuario_autenticado_en_s
       st.session_state.confesionario_mensajes = []
   else:
     st.session_state.confesionario_mensajes = []
+
+# En la portada solo se necesita poder enviar una propuesta. La lectura del
+# historial completo se reserva para Administración, donde realmente se
+# consulta. Esto evita una descarga remota innecesaria justo al iniciar sesión.
+if (
+    "confesionario_mensajes" not in st.session_state
+    and usuario_autenticado_en_sesion()
+):
+  st.session_state.confesionario_mensajes = []
 
 
 def guardar_confesionario_excel():
@@ -1335,14 +1375,18 @@ def guardar_confesionario_excel():
     return False
 
 
-if "gastos" not in st.session_state and usuario_autenticado_en_sesion():
+if (
+    "gastos" not in st.session_state
+    and usuario_autenticado_en_sesion()
+    and st.session_state.get("seccion_principal_safara") in {"Caja & Finanzas", "Administración"}
+):
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
     try:
       st.session_state.gastos = pd.DataFrame(storage.read_records("Gastos"))
       if st.session_state.gastos.empty:
         st.session_state.gastos = pd.DataFrame(
-            columns=["ID", "Fecha", "Usuario", "Concepto", "Importe", "Fichero", "Reembolsado", "Enlace Ticket", "Drive File ID", "MIME Type"]
+            columns=["Referencia", "ID", "Fecha", "Usuario", "Concepto", "Importe", "Fichero", "Reembolsado", "Enlace Ticket", "Drive File ID", "MIME Type"]
         )
       else:
         st.session_state.gastos["ID"] = pd.to_numeric(st.session_state.gastos["ID"], errors="coerce").fillna(0).astype(int)
@@ -1359,6 +1403,7 @@ if "gastos" not in st.session_state and usuario_autenticado_en_sesion():
     except:
       st.session_state.gastos = pd.DataFrame(
           columns=[
+              "Referencia",
               "ID",
               "Fecha",
               "Usuario",
@@ -1372,6 +1417,7 @@ if "gastos" not in st.session_state and usuario_autenticado_en_sesion():
   else:
     st.session_state.gastos = pd.DataFrame(
         columns=[
+            "Referencia",
             "ID",
             "Fecha",
             "Usuario",
@@ -1383,7 +1429,11 @@ if "gastos" not in st.session_state and usuario_autenticado_en_sesion():
         ]
     )
 
-if "saldo_caja" not in st.session_state and usuario_autenticado_en_sesion():
+if (
+    "saldo_caja" not in st.session_state
+    and usuario_autenticado_en_sesion()
+    and st.session_state.get("seccion_principal_safara") in {"Caja & Finanzas", "Administración"}
+):
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
     try:
@@ -1768,7 +1818,7 @@ if not st.session_state.usuario_autenticado:
           st.session_state.pop("mantenimiento_google_comprobado", None)
           st.session_state.fallos_acceso = 0
           st.session_state.bloqueado_hasta = None
-          registrar_auditoria("inicio_sesion", nombre_login)
+          registrar_auditoria_en_segundo_plano("inicio_sesion", nombre_login)
           st.success(f"¡Bienvenido de nuevo, {nombre_login}!")
           st.rerun()
         else:
@@ -2097,7 +2147,9 @@ if seccion_activa == "Nuestras Movidas":
 
   ensayo_info = informacion_ensayo()
   ensayo_info["url_maps"] = UBICACIONES_ENSAYO[ensayo_info["ubicacion_nombre"]]
-  historial_ensayos = sincronizar_historial_ensayos()
+  # El historial no altera la encuesta activa. Se consulta de forma explícita
+  # para que el acceso diario no quede esperando operaciones históricas.
+  historial_ensayos = []
   fecha_ens_str = (
       ensayo_info["fecha"].strftime("%d/%m/%Y")
       if isinstance(ensayo_info["fecha"], datetime.date)
@@ -2219,14 +2271,18 @@ if seccion_activa == "Nuestras Movidas":
         f" {counts['Ganza (bailarinas)']}"
     )
 
-  if historial_ensayos:
-    ensayos_confirmados = sum(
-        1 for ensayo in historial_ensayos if ensayo.get("estado") == "CONFIRMADO"
-    )
-    st.caption(
-        f"Historial técnico: {ensayos_confirmados} ensayos confirmados de "
-        f"{len(historial_ensayos)} semanas cerradas."
-    )
+  if st.button("Consultar historial de ensayos", key="consultar_historial_ensayos"):
+    historial_ensayos = sincronizar_historial_ensayos()
+    if historial_ensayos:
+      ensayos_confirmados = sum(
+          1 for ensayo in historial_ensayos if ensayo.get("estado") == "CONFIRMADO"
+      )
+      st.caption(
+          f"Historial técnico: {ensayos_confirmados} ensayos confirmados de "
+          f"{len(historial_ensayos)} semanas cerradas."
+      )
+    else:
+      st.info("Aún no hay ensayos cerrados en el historial.")
 
   st.markdown("---")
 
@@ -2720,7 +2776,7 @@ if seccion_activa == "Caja & Finanzas":
                       _google_storage_error or "Google Drive está pendiente de autorización."
                   )
                 drive_file_id, enlace_excel = almacenamiento_drive.upload_receipt(
-                    nombre_fichero, contenido_fichero, mime_type
+                    str(nuevo_reg["Fichero"]), contenido_fichero, mime_type
                 )
                 storage.confirmar_justificante_drive(
                     int(nuevo_reg["ID"]), drive_file_id, enlace_excel

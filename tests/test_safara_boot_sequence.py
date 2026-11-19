@@ -11,6 +11,9 @@ APP_SOURCE = (
 
 class BootSequenceTests(unittest.TestCase):
     def test_working_data_loads_only_after_authentication(self):
+        initializers = APP_SOURCE.split("# --- INICIALIZACIÓN DE VOTOS ---", 1)[1].split(
+            "def guardar_gastos_persistentes", 1
+        )[0]
         for dataset in (
             "votos_historial",
             "actuaciones",
@@ -18,19 +21,13 @@ class BootSequenceTests(unittest.TestCase):
             "gastos",
             "saldo_caja",
         ):
-            self.assertIn(
-                f'if "{dataset}" not in st.session_state and usuario_autenticado_en_sesion():',
-                APP_SOURCE,
-            )
+            marker = f'"{dataset}" not in st.session_state'
+            position = initializers.index(marker)
+            section = initializers[position: position + 520]
+            self.assertIn("usuario_autenticado_en_sesion()", section)
 
     def test_boot_does_not_write_actuaciones(self):
-        marker = (
-            'if "actuaciones" not in st.session_state and '
-            "usuario_autenticado_en_sesion():"
-        )
-        section = APP_SOURCE.split(marker, 1)[1].split(
-            "# --- CONFESIONARIO PERSISTENTE ---", 1
-        )[0]
+        section = APP_SOURCE.split("# --- CONFESIONARIO PERSISTENTE ---", 1)[0]
         self.assertNotIn("guardar_actuaciones_excel()", section)
 
     def test_google_return_reloads_after_restoring_the_session(self):

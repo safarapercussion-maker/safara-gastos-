@@ -53,6 +53,18 @@ def run_google_maintenance(
     if google is None:
         return False
     try:
+        # La organización de Drive es una mejora documental: conserva los
+        # identificadores y enlaces existentes, y nunca puede bloquear los
+        # informes ni una acción principal del grupo.
+        try:
+            for ticket in google.organizar_justificantes_archivados(
+                database.listar_justificantes_para_archivar()
+            ):
+                database.confirmar_nombre_justificante(
+                    int(ticket["gasto_id"]), str(ticket["fichero"])
+                )
+        except Exception:
+            pass
         work = database.iniciar_mantenimiento_google()
         if not work:
             return False

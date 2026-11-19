@@ -33,7 +33,7 @@ SHEET_SCHEMA: dict[str, list[str]] = {
     "Votos": ["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"],
     "Actuaciones": ["id", "titulo", "fecha", "hora", "lugar", "estado", "sheet_col"],
     "Gastos": [
-        "ID", "Fecha", "Usuario", "Concepto", "Importe", "Fichero", "Reembolsado",
+        "Referencia", "ID", "Fecha", "Usuario", "Concepto", "Importe", "Fichero", "Reembolsado",
         "Enlace Ticket", "Drive File ID", "MIME Type",
     ],
     "Confesionario": ["usuario", "mensaje", "fecha"],
@@ -48,7 +48,7 @@ REPORT_SCHEMA: dict[str, list[str]] = {
     "Informe Invitaciones": ["Emitida por", "Creada", "Caduca", "Usada por", "Usada el"],
     "Informe Votos": ["Encuesta", "Ciclo", "Persona", "Respuesta", "Actualizado"],
     "Informe Actuaciones": ["ID", "Título", "Fecha", "Hora", "Lugar", "Estado"],
-    "Informe Gastos": ["ID", "Fecha", "Persona", "Concepto", "Importe", "Estado", "Ticket"],
+    "Informe Gastos": ["Referencia", "ID", "Fecha", "Persona", "Concepto", "Importe", "Estado", "Ticket"],
     "Informe Caja": ["Concepto", "Importe", "Actualizado"],
     "Informe Sincronización": ["Estado", "Última actualización", "Origen"],
 }
@@ -223,7 +223,7 @@ class GoogleSafaraStorage:
         try:
             folder = self._drive_client().files().create(
                 body={
-                    "name": "SAFARA GASTOS — Justificantes",
+                    "name": "RECIBOS SAFARA",
                     "mimeType": "application/vnd.google-apps.folder",
                     "appProperties": {"safara_tipo": "justificantes"},
                 },
@@ -307,6 +307,88 @@ class GoogleSafaraStorage:
             # La auditoría no puede impedir una acción ya confirmada, pero nunca incluye secretos.
             return
 
+    def _carpeta_anual(self, ejercicio: str) -> str:
+        """Devuelve la carpeta anual dentro del archivo principal de recibos."""
+        if not self._folder_id:
+            raise StorageOperationError("No está preparada la carpeta segura de justificantes.")
+        drive = self._drive_client()
+        nombre = str(ejercicio)
+        query = (
+            f"name = '{nombre}' and mimeType = 'application/vnd.google-apps.folder' and "
+            f"'{self._folder_id}' in parents and trashed = false"
+        )
+        found = drive.files().list(
+            q=query, fields="files(id)", supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute().get("files", [])
+        if found:
+            return str(found[0]["id"])
+        folder = drive.files().create(
+            body={
+                "name": nombre,
+                "mimeType": "application/vnd.google-apps.folder",
+                "parents": [self._folder_id],
+            },
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+        return str(folder["id"])
+
+    def organizar_justificantes_archivados(self, tickets: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Renombra y sitúa recibos existentes sin modificar sus enlaces de Drive."""
+        try:
+            if not self._folder_id:
+                return []
+            drive = self._drive_client()
+            drive.files().update(
+                fileId=self._folder_id,
+                body={"name": "RECIBOS SAFARA"},
+                fields="id",
+                supportsAllDrives=True,
+            ).execute()
+            organizados: list[dict[str, Any]] = []
+            for ticket in tickets:
+                referencia = str(ticket.get("referencia_anual", ""))
+                file_id = str(ticket.get("drive_file_id", ""))
+                if not re.fullmatch(r"\d{4}-\d{3,}", referencia) or not file_id:
+                    continue
+                nombre = str(ticket.get("fichero") or f"{referencia}_ticket")
+                carpeta_anual = self._carpeta_anual(referencia[:4])
+                metadata = drive.files().get(
+                    fileId=file_id, fields="name,parents", supportsAllDrives=True,
+                ).execute()
+                parents = [str(parent) for parent in metadata.get("parents", [])]
+                # Si el archivo ya tiene su nombre definitivo y está dentro de
+                # su carpeta anual, no hacemos otra llamada remota en cada
+                # mantenimiento. Así la organización es idempotente y rápida.
+                if metadata.get("name") == nombre and carpeta_anual in parents:
+                    organizados.append({
+                        "gasto_id": int(ticket["gasto_id"]),
+                        "fichero": nombre,
+                        "drive_file_id": file_id,
+                    })
+                    continue
+                update_args = {
+                    "fileId": file_id,
+                    "body": {"name": nombre},
+                    "addParents": carpeta_anual,
+                    "fields": "id,webViewLink",
+                    "supportsAllDrives": True,
+                }
+                # Solo retiramos la carpeta principal cuando realmente es uno
+                # de los padres. Nunca tocamos ubicaciones ajenas.
+                if self._folder_id in parents:
+                    update_args["removeParents"] = self._folder_id
+                update = drive.files().update(**update_args).execute()
+                organizados.append({
+                    "gasto_id": int(ticket["gasto_id"]),
+                    "fichero": nombre,
+                    "drive_file_id": str(update.get("id", file_id)),
+                })
+            return organizados
+        except Exception as error:
+            raise StorageOperationError("No se ha podido organizar el archivo de recibos en Drive.") from error
+
     def upload_receipt(self, filename: str, content: bytes, mime_type: str) -> tuple[str, str]:
         """Sube un justificante validado y devuelve id y enlace de Drive."""
         try:
@@ -317,8 +399,10 @@ class GoogleSafaraStorage:
             media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
             if not self._folder_id:
                 raise StorageOperationError("No está preparada la carpeta segura de justificantes.")
+            ejercicio = filename[:4] if re.fullmatch(r"\d{4}-\d{3,}_ticket\.[a-z]+", filename) else "SIN_CLASIFICAR"
+            carpeta_destino = self._carpeta_anual(ejercicio)
             file_data = self._drive_client().files().create(
-                body={"name": filename, "parents": [self._folder_id]},
+                body={"name": filename, "parents": [carpeta_destino]},
                 media_body=media,
                 fields="id,webViewLink",
                 supportsAllDrives=True,
@@ -384,6 +468,7 @@ class GoogleSafaraStorage:
             expense_rows = [expense_headers]
             for expense in reports.get("Informe Gastos", []):
                 expense_rows.append([
+                    self._cell_value(expense.get("Referencia", "")),
                     self._cell_value(expense.get("ID", "")),
                     self._cell_value(expense.get("Fecha", "")),
                     self._cell_value(expense.get("Persona", "")),

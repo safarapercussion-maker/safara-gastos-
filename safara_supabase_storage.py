@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from safara_security import verify_invitation_code
@@ -143,6 +144,28 @@ class SupabaseSafaraStorage:
             return dt.date.fromisoformat(raw)
         except ValueError:
             return dt.datetime.strptime(raw, "%d/%m/%Y").date()
+
+    @staticmethod
+    def _nombre_ticket(referencia: str, fichero_origen: str) -> str:
+        """Crea un nombre fiscal claro sin incorporar datos personales."""
+        extension = Path(str(fichero_origen)).suffix.lower()
+        if extension not in {".png", ".jpg", ".jpeg", ".pdf"}:
+            extension = ".bin"
+        return f"{referencia}_ticket{extension}"
+
+    def _siguiente_referencia_gasto(self, cursor, fecha: Any) -> str:
+        ejercicio = self._as_date(fecha).year
+        cursor.execute(
+            "select pg_advisory_xact_lock(hashtext(%s))",
+            (f"safara-gastos-referencia-{ejercicio}",),
+        )
+        cursor.execute(
+            """select coalesce(max(split_part(referencia_anual, '-', 2)::integer), 0) + 1 as siguiente
+               from safara.gastos where referencia_anual like %s""",
+            (f"{ejercicio}-%",),
+        )
+        siguiente = int((cursor.fetchone() or {"siguiente": 1})["siguiente"] or 1)
+        return f"{ejercicio}-{siguiente:03d}"
 
     def _run(self, callback):
         if self._connection_failure is not None:
@@ -349,7 +372,7 @@ class SupabaseSafaraStorage:
                 join safara.usuarios u on u.id=v.usuario_id""",
             "Actuaciones": """select id, titulo, fecha, hora, lugar, estado,
                 id + 2 as sheet_col from safara.actuaciones order by fecha, id""",
-            "Gastos": """select g.id as \"ID\", g.fecha as \"Fecha\", u.nombre as \"Usuario\",
+            "Gastos": """select g.id as \"ID\", g.referencia_anual as \"Referencia\", g.fecha as \"Fecha\", u.nombre as \"Usuario\",
                 g.concepto as \"Concepto\", g.importe as \"Importe\", g.fichero as \"Fichero\",
                 g.estado_reembolso as \"Reembolsado\", coalesce(g.enlace_ticket, '') as \"Enlace Ticket\",
                 coalesce(g.drive_file_id, '') as \"Drive File ID\", coalesce(g.mime_type, '') as \"MIME Type\",
@@ -568,16 +591,20 @@ class SupabaseSafaraStorage:
 
     def crear_gasto(self, data: dict[str, Any]) -> dict[str, Any]:
         def callback(cursor):
+            referencia = self._siguiente_referencia_gasto(cursor, data["Fecha"])
+            fichero = self._nombre_ticket(referencia, str(data["Fichero"]))
             cursor.execute(
                 """insert into safara.gastos
-                   (fecha, usuario_id, concepto, importe, fichero, estado_reembolso, enlace_ticket, drive_file_id, mime_type)
-                   values (%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+                   (fecha, usuario_id, concepto, importe, fichero, referencia_anual, estado_reembolso, enlace_ticket, drive_file_id, mime_type)
+                   values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
                 (self._as_date(data["Fecha"]), self._user_id(cursor, data["Usuario"]), data["Concepto"],
-                 data["Importe"], data["Fichero"], data["Reembolsado"], data.get("Enlace Ticket") or None,
+                 data["Importe"], fichero, referencia, data["Reembolsado"], data.get("Enlace Ticket") or None,
                  data.get("Drive File ID") or None, data.get("MIME Type") or None),
             )
             record = dict(data)
             record["ID"] = int(cursor.fetchone()["id"])
+            record["Referencia"] = referencia
+            record["Fichero"] = fichero
             return record
         return self._run(callback)
 
@@ -593,14 +620,16 @@ class SupabaseSafaraStorage:
             raise SupabaseStorageOperationError("El justificante no tiene un tamaño válido.")
 
         def callback(cursor):
+            referencia = self._siguiente_referencia_gasto(cursor, data["Fecha"])
+            fichero = self._nombre_ticket(referencia, str(data["Fichero"]))
             cursor.execute(
                 """insert into safara.gastos
-                   (fecha, usuario_id, concepto, importe, fichero, estado_reembolso,
+                   (fecha, usuario_id, concepto, importe, fichero, referencia_anual, estado_reembolso,
                     enlace_ticket, drive_file_id, mime_type, estado_justificante)
-                   values (%s,%s,%s,%s,%s,%s,null,null,%s,'PENDIENTE_DRIVE') returning id""",
+                   values (%s,%s,%s,%s,%s,%s,%s,null,null,%s,'PENDIENTE_DRIVE') returning id""",
                 (
                     self._as_date(data["Fecha"]), self._user_id(cursor, data["Usuario"]),
-                    data["Concepto"], data["Importe"], data["Fichero"],
+                    data["Concepto"], data["Importe"], fichero, referencia,
                     data["Reembolsado"], data.get("MIME Type") or None,
                 ),
             )
@@ -609,10 +638,12 @@ class SupabaseSafaraStorage:
                 """insert into safara.justificantes_pendientes
                    (gasto_id, contenido, nombre_fichero, mime_type)
                    values (%s, %s, %s, %s)""",
-                (gasto_id, contenido, data["Fichero"], data.get("MIME Type") or None),
+                (gasto_id, contenido, fichero, data.get("MIME Type") or None),
             )
             record = dict(data)
             record["ID"] = gasto_id
+            record["Referencia"] = referencia
+            record["Fichero"] = fichero
             record["Estado Justificante"] = "PENDIENTE_DRIVE"
             return record
 
@@ -681,6 +712,27 @@ class SupabaseSafaraStorage:
             return list(cursor.fetchall())
 
         return self._run(callback)
+
+    def listar_justificantes_para_archivar(self) -> list[dict[str, Any]]:
+        """Devuelve tickets existentes para su organización física en Drive."""
+        def callback(cursor):
+            cursor.execute(
+                """select id as gasto_id, referencia_anual, fichero, drive_file_id
+                   from safara.gastos
+                   where drive_file_id is not null and drive_file_id <> ''
+                   order by fecha, id"""
+            )
+            return list(cursor.fetchall())
+        return self._run(callback)
+
+    def confirmar_nombre_justificante(self, gasto_id: int, fichero: str) -> None:
+        """Actualiza el nombre visible de Drive sin cambiar enlace ni identificador."""
+        def callback(cursor):
+            cursor.execute(
+                "update safara.gastos set fichero=%s where id=%s",
+                (str(fichero)[:255], int(gasto_id)),
+            )
+        self._run(callback)
 
     def marcar_gasto_abonado(self, gasto_id: int, usuario: str) -> bool:
         def callback(cursor):
@@ -816,7 +868,7 @@ class SupabaseSafaraStorage:
                 join safara.usuarios u on u.id=v.usuario_id order by v.actualizado_en desc""",
             "Informe Actuaciones": """select id as \"ID\", titulo as \"Título\", fecha as \"Fecha\", hora as \"Hora\",
                 lugar as \"Lugar\", estado as \"Estado\" from safara.actuaciones order by fecha, id""",
-            "Informe Gastos": """select g.id as \"ID\", g.fecha as \"Fecha\", u.nombre as \"Persona\", g.concepto as \"Concepto\",
+            "Informe Gastos": """select g.referencia_anual as \"Referencia\", g.id as \"ID\", g.fecha as \"Fecha\", u.nombre as \"Persona\", g.concepto as \"Concepto\",
                 g.importe as \"Importe\", g.estado_reembolso as \"Estado\", coalesce(g.enlace_ticket, '') as \"Ticket\"
                 from safara.gastos g join safara.usuarios u on u.id=g.usuario_id order by g.fecha desc, g.id desc""",
             "Informe Caja": """select 'Saldo de caja' as \"Concepto\", valor as \"Importe\", actualizado_en as \"Actualizado\"

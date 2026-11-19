@@ -85,6 +85,16 @@ class MaintenanceTests(unittest.TestCase):
         self.assertIn("Informe Sincronización", google.reports)
         self.assertEqual(len(google.backups), 1)
 
+    def test_maintenance_treats_google_as_an_isolated_copy(self):
+        class BrokenGoogle(FakeGoogle):
+            def write_report_snapshot(self, reports):
+                raise RuntimeError("Google temporalmente no disponible")
+
+        database = FakeDatabase()
+        self.assertFalse(run_google_maintenance(database, BrokenGoogle()))
+        self.assertEqual(database.finished, [])
+        self.assertEqual(len(database.failed), 1)
+
     def test_maintenance_skips_when_no_work_is_due(self):
         database = FakeDatabase(work=None)
         self.assertFalse(run_google_maintenance(database, FakeGoogle()))

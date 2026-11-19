@@ -70,6 +70,9 @@ def run_google_maintenance(
             backup_done = True
         database.terminar_mantenimiento_google(int(work["sheets_revision"]), backup_done)
         return True
-    except (StorageOperationError, SupabaseStorageOperationError) as error:
-        database.fallar_mantenimiento_google(str(error))
+    except Exception as error:
+        # Google es únicamente una vista de consulta y una copia adicional:
+        # una incidencia suya jamás debe propagarse a quien acaba de registrar
+        # un gasto, votar o gestionar una actuación en Supabase.
+        database.fallar_mantenimiento_google(str(error) or "No se pudo actualizar Google.")
         return False

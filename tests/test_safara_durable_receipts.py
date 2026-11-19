@@ -32,6 +32,12 @@ class DurableReceiptTests(unittest.TestCase):
         self.assertNotIn("guardar_gastos_persistentes()", ticket_form)
         self.assertIn("la base segura de Supabase no está disponible", ticket_form)
 
+    def test_ticket_registration_requests_a_safe_google_report_refresh(self):
+        ticket_form = APP_SOURCE.split('with tab_sub_reg:', 1)[1].split(
+            'with tab_sub_hist:', 1
+        )[0]
+        self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", ticket_form)
+
     def test_supabase_detection_survives_a_streamlit_code_reload(self):
         self.assertIn("_SUPABASE_BACKEND_VERSION", APP_SOURCE)
         self.assertIn('"__name__", "") == "SupabaseSafaraStorage"', APP_SOURCE)

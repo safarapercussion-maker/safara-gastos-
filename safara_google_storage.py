@@ -327,7 +327,14 @@ class GoogleSafaraStorage:
             return
 
     def write_report_snapshot(self, reports: dict[str, Iterable[dict[str, Any]]]) -> None:
-        """Actualiza solo las pestañas de informe sin exponer datos sensibles."""
+        """Actualiza las vistas de consulta sin exponer datos sensibles.
+
+        ``Gastos`` se conserva como una vista compatible para la administración:
+        no es una fuente de datos ni contiene credenciales, pero permite revisar
+        los gastos en la pestaña que ya conocen las personas usuarias. La fuente
+        de verdad sigue siendo Supabase y los informes reducidos continúan en
+        las pestañas ``Informe ...``.
+        """
         try:
             spreadsheet = self._spreadsheet_client()
             for sheet_name, headers in REPORT_SCHEMA.items():
@@ -342,6 +349,33 @@ class GoogleSafaraStorage:
                     rows.append([self._cell_value(record.get(header, "")) for header in headers])
                 worksheet.clear()
                 worksheet.update("A1", rows, value_input_option="RAW")
+
+            # La hoja original de Gastos es una consulta administrativa, no una
+            # segunda base de datos. Se reconstruye siempre desde el informe de
+            # Supabase para evitar filas duplicadas o datos desactualizados.
+            expense_headers = SHEET_SCHEMA["Gastos"]
+            try:
+                expense_sheet = spreadsheet.worksheet("Gastos")
+            except Exception:
+                expense_sheet = spreadsheet.add_worksheet(
+                    title="Gastos", rows=100, cols=len(expense_headers)
+                )
+            expense_rows = [expense_headers]
+            for expense in reports.get("Informe Gastos", []):
+                expense_rows.append([
+                    self._cell_value(expense.get("ID", "")),
+                    self._cell_value(expense.get("Fecha", "")),
+                    self._cell_value(expense.get("Persona", "")),
+                    self._cell_value(expense.get("Concepto", "")),
+                    self._cell_value(expense.get("Importe", "")),
+                    "",  # El nombre del archivo no es necesario para la consulta.
+                    self._cell_value(expense.get("Estado", "")),
+                    self._cell_value(expense.get("Ticket", "")),
+                    "",  # El identificador interno de Drive no se expone en Sheets.
+                    "",  # El tipo MIME tampoco es necesario para la consulta.
+                ])
+            expense_sheet.clear()
+            expense_sheet.update("A1", expense_rows, value_input_option="RAW")
         except Exception as error:
             raise StorageOperationError("No se ha podido actualizar el informe de Google Sheets.") from error
 

@@ -620,18 +620,23 @@ def diagnostico_supabase_para_administracion():
 
 
 def actualizar_informes_y_copias_en_segundo_plano():
-  """No bloquea el uso de la app si Google no está disponible temporalmente."""
+  """Actualiza Google como copia de consulta sin poner en riesgo Supabase."""
   if not supabase_storage_enabled(st.secrets):
     return False
-  database = obtener_almacenamiento_google()
-  if not usar_almacenamiento_supabase(database):
+  try:
+    database = obtener_almacenamiento_google()
+    if not usar_almacenamiento_supabase(database):
+      return False
+    google = obtener_almacenamiento_drive()
+    return run_google_maintenance(database, google)
+  except Exception:
+    # La operación principal ya se confirmó en Supabase. Google se reintenta
+    # en la siguiente acción autorizada sin mostrar un error técnico al grupo.
     return False
-  google = obtener_almacenamiento_drive()
-  return run_google_maintenance(database, google)
 
 
-# Las copias e informes se lanzan desde Administración. Ejecutarlos al abrir
-# cada página multiplica conexiones y llamadas a Google sin mejorar los datos.
+# Los informes se actualizan al terminar acciones que cambian datos. El bloqueo
+# temporal de Supabase evita que varias personas lancen la misma copia a la vez.
 
 
 def reiniciar_estado_si_cambia_backend():
@@ -2660,6 +2665,10 @@ with tab_gastos_app:
             registrar_auditoria(
                 "gasto_registrado", usuario_actual, str(nuevo_reg.get("ID", id_nuevo))
             )
+            # Supabase ya confirmó el gasto y, si procede, el ticket. Ahora se
+            # actualiza Sheets como vista de consulta; un fallo externo nunca
+            # revierte el gasto ni interrumpe a la persona que lo registró.
+            actualizar_informes_y_copias_en_segundo_plano()
             st.info(aviso_justificante)
           else:
             st.error("No se ha podido guardar el gasto. Inténtalo de nuevo.")
@@ -3236,6 +3245,7 @@ with tab_admin_app:
               gasto_guardado = guardar_gastos_persistentes()
             if gasto_guardado:
               registrar_auditoria("gasto_abonado", usuario_actual, str(prow["ID"]))
+              actualizar_informes_y_copias_en_segundo_plano()
               st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
               st.rerun()
             else:

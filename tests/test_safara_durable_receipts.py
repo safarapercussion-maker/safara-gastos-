@@ -39,14 +39,29 @@ class DurableReceiptTests(unittest.TestCase):
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", ticket_form)
 
     def test_admin_open_recovers_pending_google_report_updates(self):
-        admin_panel = APP_SOURCE.split("with tab_admin_app:", 1)[1]
+        admin_panel = APP_SOURCE.split('if seccion_activa == "Administración":', 1)[1]
         self.assertIn("recupera también cualquier actualización que", admin_panel)
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", admin_panel)
 
-    def test_admin_recovers_protected_receipts_without_a_manual_upload(self):
-        admin_panel = APP_SOURCE.split("with tab_admin_app:", 1)[1]
+    def test_admin_retries_protected_receipts_only_on_explicit_request(self):
+        admin_panel = APP_SOURCE.split('if seccion_activa == "Administración":', 1)[1]
         self.assertIn("reintentar_justificantes_pendientes_sin_interrumpir", admin_panel)
-        self.assertIn("Se han enviado automáticamente", admin_panel)
+        self.assertIn("REINTENTAR JUSTIFICANTES PENDIENTES", admin_panel)
+        before_button = admin_panel.split('if st.button("REINTENTAR JUSTIFICANTES PENDIENTES")', 1)[0]
+        self.assertNotIn("reintentar_justificantes_pendientes_sin_interrumpir(", before_button)
+
+    def test_google_reporting_is_scheduled_without_blocking_the_screen(self):
+        maintenance = APP_SOURCE.split("def actualizar_informes_y_copias_en_segundo_plano():", 1)[1].split(
+            "def reintentar_justificantes_pendientes_sin_interrumpir", 1
+        )[0]
+        self.assertIn("ThreadPoolExecutor", APP_SOURCE)
+        self.assertIn(".submit(", maintenance)
+        self.assertNotIn("return run_google_maintenance", maintenance)
+
+    def test_primary_sections_are_loaded_only_when_opened(self):
+        self.assertIn('seccion_activa = st.radio(', APP_SOURCE)
+        self.assertNotIn('tab_movidas, tab_eventos, tab_gastos_app, tab_admin_app = st.tabs(', APP_SOURCE)
+        self.assertIn('if seccion_activa == "Caja & Finanzas":', APP_SOURCE)
 
     def test_votes_request_an_isolated_google_report_refresh(self):
         vote_handler = APP_SOURCE.split("def registrar_voto_backend", 1)[1].split(

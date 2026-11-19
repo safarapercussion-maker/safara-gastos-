@@ -7,6 +7,7 @@ import random
 import re
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 try:
   from zoneinfo import ZoneInfo
@@ -479,6 +480,7 @@ _google_storage = None
 _google_storage_error = ""
 _supabase_storage = None
 _supabase_storage_error = ""
+_google_maintenance_future = None
 
 
 def version_backend_supabase():
@@ -623,16 +625,40 @@ def diagnostico_supabase_para_administracion():
   return almacenamiento, ""
 
 
+@st.cache_resource(show_spinner=False)
+def obtener_ejecutor_mantenimiento_google():
+  """Mantiene las copias de consulta fuera del recorrido de la persona usuaria."""
+  return ThreadPoolExecutor(max_workers=1, thread_name_prefix="safara-google")
+
+
+def ejecutar_mantenimiento_google(database, google):
+  """Ejecuta una réplica de Google sin depender del contexto de Streamlit."""
+  try:
+    return run_google_maintenance(database, google)
+  except Exception:
+    return False
+
+
 def actualizar_informes_y_copias_en_segundo_plano():
-  """Actualiza Google como copia de consulta sin poner en riesgo Supabase."""
+  """Programa Google como copia de consulta sin frenar ninguna pantalla."""
+  global _google_maintenance_future
   if not supabase_storage_enabled(st.secrets):
     return False
   try:
+    # Una única tarea por proceso evita carreras y duplicados. Supabase conserva
+    # el bloqueo transaccional como segunda capa cuando hay varias sesiones.
+    if _google_maintenance_future and not _google_maintenance_future.done():
+      return True
     database = obtener_almacenamiento_google()
     if not usar_almacenamiento_supabase(database):
       return False
     google = obtener_almacenamiento_drive()
-    return run_google_maintenance(database, google)
+    if google is None:
+      return False
+    _google_maintenance_future = obtener_ejecutor_mantenimiento_google().submit(
+        ejecutar_mantenimiento_google, database, google
+    )
+    return True
   except Exception:
     # La operación principal ya se confirmó en Supabase. Google se reintenta
     # en la siguiente acción autorizada sin mostrar un error técnico al grupo.
@@ -2036,12 +2062,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_movidas, tab_eventos, tab_gastos_app, tab_admin_app = st.tabs(
-    ["Nuestras Movidas", "Agenda & Bolos", "Caja & Finanzas", "Administración"]
+seccion_activa = st.radio(
+    "Sección principal",
+    ["Nuestras Movidas", "Agenda & Bolos", "Caja & Finanzas", "Administración"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="seccion_principal_safara",
 )
 
 # --- PESTAÑA 1: NUESTRAS MOVIDAS ---
-with tab_movidas:
+if seccion_activa == "Nuestras Movidas":
   cumpleaneros_hoy = []
   for nombre_u, u_data in st.session_state.usuarios_registrados.items():
     fnac = u_data.get("fnac")
@@ -2359,7 +2389,7 @@ with tab_movidas:
 # ==============================================================================
 # --- PESTAÑA 2: AGENDA & BOLOS (ENCUESTAS HORIZONTALES SIN REDIRECCIÓN) ------
 # ==============================================================================
-with tab_eventos:
+if seccion_activa == "Agenda & Bolos":
   st.markdown(
       "<h3 style='color: #E74C3C;'>Agenda de Actuaciones y Encuestas</h3>",
       unsafe_allow_html=True,
@@ -2529,7 +2559,7 @@ with tab_eventos:
       st.markdown("---")
 
 # --- PESTAÑA 3: CAJA & FINANZAS ---
-with tab_gastos_app:
+if seccion_activa == "Caja & Finanzas":
   gastos_abonados_total = (
       st.session_state.gastos[
           st.session_state.gastos["Reembolsado"] == "ABONADO"
@@ -2795,7 +2825,7 @@ with tab_gastos_app:
       st.warning("Cargando historial de gastos...")
 
 # --- PESTAÑA 4: PANEL DE ADMINISTRACIÓN ---
-with tab_admin_app:
+if seccion_activa == "Administración":
   if not es_administrador(usuario_actual):
     st.info("Esta sección está disponible solo para personas administradoras.")
   else:
@@ -2908,14 +2938,6 @@ with tab_admin_app:
           )
 
         if drive_autorizado:
-          reenviados_automaticamente = reintentar_justificantes_pendientes_sin_interrumpir(
-              almacenamiento_seguro
-          )
-          if reenviados_automaticamente:
-            actualizar_informes_y_copias_en_segundo_plano()
-            st.info(
-                f"Se han enviado automáticamente {reenviados_automaticamente} justificante(s) pendiente(s)."
-            )
           try:
             justificantes_pendientes = almacenamiento_seguro.listar_justificantes_pendientes()
           except SupabaseStorageOperationError:
@@ -3031,7 +3053,7 @@ with tab_admin_app:
     st.caption("Actualiza la vista de consulta de Google sin ralentizar la entrada del grupo.")
     if st.button("ACTUALIZAR INFORMES AHORA", key="sincronizar_informes_admin"):
       if actualizar_informes_y_copias_en_segundo_plano():
-        st.success("Informes y copias actualizados.")
+        st.success("Sincronización iniciada. Puedes seguir usando la aplicación.")
       else:
         st.info("No había cambios pendientes o Google no está disponible ahora mismo.")
 

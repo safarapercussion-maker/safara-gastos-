@@ -136,11 +136,14 @@ class GoogleStorageConfig:
 class GoogleSafaraStorage:
     """Adaptador pequeño y deliberadamente explícito para los datos de SAFARA."""
 
-    def __init__(self, config: GoogleStorageConfig, drive_credentials: Any | None = None):
+    def __init__(
+        self,
+        config: GoogleStorageConfig,
+        drive_credentials: Any | None = None,
+        receipts_folder_id: str | None = None,
+    ):
         try:
-            import gspread
             from google.oauth2.service_account import Credentials
-            from googleapiclient.discovery import build
         except ImportError as error:
             raise StorageConfigurationError(
                 "Faltan dependencias de Google en requirements.txt."
@@ -148,31 +151,82 @@ class GoogleSafaraStorage:
 
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
-            # El alcance permite subir en la carpeta compartida; el acceso real
-            # sigue limitado a los elementos que se han compartido con la cuenta.
             "https://www.googleapis.com/auth/drive",
         ]
         try:
-            credentials = Credentials.from_service_account_info(
+            self._service_credentials = Credentials.from_service_account_info(
                 config.service_account, scopes=scopes
             )
-            self._spreadsheet = gspread.authorize(credentials).open_by_key(
-                config.spreadsheet_id
-            )
-            self._drive = build(
-                "drive", "v3", credentials=drive_credentials or credentials, cache_discovery=False
-            )
-            self._folder_id = config.receipts_folder_id
+            self._spreadsheet_id = config.spreadsheet_id
+            self._drive_credentials = drive_credentials or self._service_credentials
+            self._folder_id = str(receipts_folder_id or config.receipts_folder_id).strip()
+            self._spreadsheet = None
+            self._drive = None
         except Exception as error:
             raise StorageConfigurationError(
                 "No se puede acceder al espacio de pruebas de Google. Revisa los permisos de la cuenta técnica."
             ) from error
 
+    def _spreadsheet_client(self):
+        """Conecta Sheets solo al generar informes, nunca al subir un ticket."""
+        if self._spreadsheet is not None:
+            return self._spreadsheet
+        try:
+            import gspread
+            self._spreadsheet = gspread.authorize(self._service_credentials).open_by_key(
+                self._spreadsheet_id
+            )
+            return self._spreadsheet
+        except Exception as error:
+            raise StorageConfigurationError(
+                "No se puede acceder al informe de Google Sheets. Los datos seguros siguen disponibles."
+            ) from error
+
+    def _drive_client(self):
+        """Conecta Drive bajo demanda para no bloquear gastos por un fallo de Sheets."""
+        if self._drive is not None:
+            return self._drive
+        try:
+            from googleapiclient.discovery import build
+            self._drive = build(
+                "drive", "v3", credentials=self._drive_credentials, cache_discovery=False
+            )
+            return self._drive
+        except Exception as error:
+            raise StorageOperationError(
+                "No se ha podido preparar la conexión segura con Google Drive."
+            ) from error
+
+    def crear_carpeta_justificantes_propietaria(self) -> str:
+        """Crea una carpeta propia de la aplicación con la autorización del dueño."""
+        try:
+            folder = self._drive_client().files().create(
+                body={
+                    "name": "SAFARA GASTOS — Justificantes",
+                    "mimeType": "application/vnd.google-apps.folder",
+                    "appProperties": {"safara_tipo": "justificantes"},
+                },
+                fields="id",
+                supportsAllDrives=True,
+            ).execute()
+            folder_id = str(folder.get("id", "")).strip()
+            if not folder_id:
+                raise StorageOperationError("Google Drive no confirmó la carpeta de justificantes.")
+            self._folder_id = folder_id
+            return folder_id
+        except StorageOperationError:
+            raise
+        except Exception as error:
+            raise StorageOperationError(
+                "Google Drive no pudo preparar la carpeta privada de justificantes."
+            ) from error
+
     def ensure_schema(self) -> None:
         """Establece cabeceras solo en pestañas todavía vacías; nunca migra datos."""
+        spreadsheet = self._spreadsheet_client()
         for sheet_name, headers in SHEET_SCHEMA.items():
             try:
-                worksheet = self._spreadsheet.worksheet(sheet_name)
+                worksheet = spreadsheet.worksheet(sheet_name)
                 values = worksheet.get_all_values()
                 if not values or (len(values) == 1 and values[0] != headers):
                     worksheet.clear()
@@ -191,7 +245,7 @@ class GoogleSafaraStorage:
     def read_records(self, sheet_name: str) -> list[dict[str, str]]:
         headers = SHEET_SCHEMA[sheet_name]
         try:
-            worksheet = self._spreadsheet.worksheet(sheet_name)
+            worksheet = self._spreadsheet_client().worksheet(sheet_name)
             values = worksheet.get_all_values()
         except Exception as error:
             raise StorageOperationError("No se ha podido leer la información guardada.") from error
@@ -217,7 +271,7 @@ class GoogleSafaraStorage:
         for record in records:
             rows.append([self._cell_value(record.get(header, "")) for header in headers])
         try:
-            worksheet = self._spreadsheet.worksheet(sheet_name)
+            worksheet = self._spreadsheet_client().worksheet(sheet_name)
             worksheet.clear()
             worksheet.update("A1", rows, value_input_option="RAW")
         except Exception as error:
@@ -225,7 +279,7 @@ class GoogleSafaraStorage:
 
     def append_audit(self, event: str, user: str = "", detail: str = "", when: str = "") -> None:
         try:
-            self._spreadsheet.worksheet("Auditoria").append_row(
+            self._spreadsheet_client().worksheet("Auditoria").append_row(
                 [when, event, user, detail.replace("\n", " ")], value_input_option="RAW"
             )
         except Exception:
@@ -240,7 +294,9 @@ class GoogleSafaraStorage:
             from googleapiclient.errors import HttpError
 
             media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
-            file_data = self._drive.files().create(
+            if not self._folder_id:
+                raise StorageOperationError("No está preparada la carpeta segura de justificantes.")
+            file_data = self._drive_client().files().create(
                 body={"name": filename, "parents": [self._folder_id]},
                 media_body=media,
                 fields="id,webViewLink",
@@ -264,7 +320,7 @@ class GoogleSafaraStorage:
         if not file_id:
             return
         try:
-            self._drive.files().delete(fileId=file_id).execute()
+            self._drive_client().files().delete(fileId=file_id).execute()
         except Exception:
             # No ocultamos el fallo económico original. La copia queda identificable
             # en Drive para que administración pueda revisarla si fuese necesario.
@@ -273,11 +329,12 @@ class GoogleSafaraStorage:
     def write_report_snapshot(self, reports: dict[str, Iterable[dict[str, Any]]]) -> None:
         """Actualiza solo las pestañas de informe sin exponer datos sensibles."""
         try:
+            spreadsheet = self._spreadsheet_client()
             for sheet_name, headers in REPORT_SCHEMA.items():
                 try:
-                    worksheet = self._spreadsheet.worksheet(sheet_name)
+                    worksheet = spreadsheet.worksheet(sheet_name)
                 except Exception:
-                    worksheet = self._spreadsheet.add_worksheet(
+                    worksheet = spreadsheet.add_worksheet(
                         title=sheet_name, rows=100, cols=max(8, len(headers))
                     )
                 rows = [headers]
@@ -298,11 +355,12 @@ class GoogleSafaraStorage:
                 "mimeType = 'application/vnd.google-apps.folder' and "
                 f"'{self._folder_id}' in parents and trashed = false"
             )
-            found = self._drive.files().list(q=query, fields="files(id)").execute().get("files", [])
+            drive = self._drive_client()
+            found = drive.files().list(q=query, fields="files(id)").execute().get("files", [])
             if found:
                 backup_folder_id = found[0]["id"]
             else:
-                folder = self._drive.files().create(
+                folder = drive.files().create(
                     body={
                         "name": "SAFARA_GASTOS_COPIAS",
                         "mimeType": "application/vnd.google-apps.folder",
@@ -311,7 +369,7 @@ class GoogleSafaraStorage:
                     fields="id",
                 ).execute()
                 backup_folder_id = folder["id"]
-            existing = self._drive.files().list(
+            existing = drive.files().list(
                 q=(f"name = '{filename}' and '{backup_folder_id}' in parents "
                    "and trashed = false"),
                 fields="files(id)",
@@ -320,12 +378,12 @@ class GoogleSafaraStorage:
             ).execute().get("files", [])
             media = MediaIoBaseUpload(io.BytesIO(content), mimetype="application/zip", resumable=False)
             if existing:
-                updated = self._drive.files().update(
+                updated = drive.files().update(
                     fileId=existing[0]["id"], media_body=media, fields="id",
                     supportsAllDrives=True,
                 ).execute()
                 return str(updated["id"])
-            created = self._drive.files().create(
+            created = drive.files().create(
                 body={"name": filename, "parents": [backup_folder_id]},
                 media_body=media,
                 fields="id",

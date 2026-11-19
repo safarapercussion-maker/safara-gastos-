@@ -543,16 +543,24 @@ def obtener_almacenamiento_drive():
             "La autorización de Drive necesita la base segura de pruebas activa."
         )
         return None
-      token_cifrado = database.obtener_token_google_drive_cifrado()
+      autorizacion_drive = database.obtener_autorizacion_google_drive()
+      token_cifrado = autorizacion_drive.get("token_cifrado", "")
+      carpeta_id = autorizacion_drive.get("carpeta_id", "")
       if not token_cifrado:
         _google_storage_error = (
             "Google Drive aún no ha sido autorizado por una persona administradora."
         )
         return None
+      if not carpeta_id:
+        _google_storage_error = (
+            "La autorización de Google Drive debe completarse de nuevo para preparar la carpeta segura."
+        )
+        return None
       credenciales_drive = credentials_from_encrypted_token(oauth_config, token_cifrado)
 
     _google_storage = GoogleSafaraStorage(
-        GoogleStorageConfig.from_secrets(st.secrets), drive_credentials=credenciales_drive
+        GoogleStorageConfig.from_secrets(st.secrets), drive_credentials=credenciales_drive,
+        receipts_folder_id=carpeta_id if credenciales_drive else None,
     )
     # Las pestañas antiguas solo pertenecen al modo legado de Google como
     # almacenamiento. Con Supabase activo, Sheets recibe exclusivamente el
@@ -2532,32 +2540,10 @@ with tab_gastos_app:
           nombre_fichero = (
               f"Gasto_{fecha}_{identificador_ticket}.{ext}"
           )
-          path_destino = ""
-          drive_file_id = ""
           mime_type = {
               "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf",
           }[ext]
           storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-          almacenamiento_drive = obtener_almacenamiento_drive() if google_storage_enabled(st.secrets) else None
-          try:
-            if almacenamiento_drive:
-              drive_file_id, enlace_excel = almacenamiento_drive.upload_receipt(
-                  nombre_fichero, contenido_fichero, mime_type
-              )
-            elif supabase_storage_enabled(st.secrets) or usar_almacenamiento_google():
-              raise StorageOperationError(
-                  _google_storage_error or "La conexión segura con Google no está lista."
-              )
-            else:
-              path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
-              with open(path_destino, "wb") as f:
-                f.write(contenido_fichero)
-              enlace_excel = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
-          except (StorageOperationError, SupabaseStorageOperationError) as error:
-            detalle_drive = str(error).strip() or "No se ha podido guardar el justificante en Drive."
-            st.error(f"{detalle_drive} El gasto no se ha registrado.")
-            st.stop()
-
           concepto_final = f"{categoria_seleccionada}" + (
               f" - {detalle_concepto}" if detalle_concepto else ""
           )
@@ -2569,17 +2555,27 @@ with tab_gastos_app:
               "Importe": float(importe),
               "Fichero": nombre_fichero,
               "Reembolsado": "PENDIENTE ABONO",
-              "Enlace Ticket": enlace_excel,
-              "Drive File ID": drive_file_id,
+              "Enlace Ticket": "",
+              "Drive File ID": "",
               "MIME Type": mime_type,
           }
           if usar_almacenamiento_supabase(storage):
             try:
-              nuevo_reg = storage.crear_gasto(nuevo_reg)
+              # La base segura confirma gasto y ticket antes de hablar con Drive.
+              # Si Google falla, administración podrá reintentarlo sin pedir el archivo otra vez.
+              nuevo_reg = storage.crear_gasto_con_justificante_pendiente(
+                  nuevo_reg, contenido_fichero
+              )
               gasto_guardado = True
             except SupabaseStorageOperationError:
               gasto_guardado = False
           else:
+            # Compatibilidad con el modo local histórico, nunca usado cuando
+            # la base segura está activada.
+            path_destino = os.path.join(RECEIPTS_DIR, nombre_fichero)
+            with open(path_destino, "wb") as archivo_local:
+              archivo_local.write(contenido_fichero)
+            nuevo_reg["Enlace Ticket"] = f'=HIPERVINCULO("{path_destino}"; "Ver Ticket")'
             st.session_state.gastos = pd.concat(
                 [st.session_state.gastos, pd.DataFrame([nuevo_reg])],
                 ignore_index=True,
@@ -2587,26 +2583,48 @@ with tab_gastos_app:
             gasto_guardado = guardar_gastos_persistentes()
           if gasto_guardado:
             if usar_almacenamiento_supabase(storage):
+              almacenamiento_drive = (
+                  obtener_almacenamiento_drive() if google_storage_enabled(st.secrets) else None
+              )
+              try:
+                if not almacenamiento_drive:
+                  raise StorageOperationError(
+                      _google_storage_error or "Google Drive está pendiente de autorización."
+                  )
+                drive_file_id, enlace_excel = almacenamiento_drive.upload_receipt(
+                    nombre_fichero, contenido_fichero, mime_type
+                )
+                storage.confirmar_justificante_drive(
+                    int(nuevo_reg["ID"]), drive_file_id, enlace_excel
+                )
+                nuevo_reg["Drive File ID"] = drive_file_id
+                nuevo_reg["Enlace Ticket"] = enlace_excel
+                nuevo_reg["Estado Justificante"] = "GUARDADO"
+                aviso_justificante = "Justificante guardado de forma segura en Drive."
+              except (StorageOperationError, SupabaseStorageOperationError) as error:
+                detalle_drive = str(error).strip() or "Drive no está disponible temporalmente."
+                try:
+                  storage.marcar_justificante_pendiente(int(nuevo_reg["ID"]), detalle_drive)
+                except SupabaseStorageOperationError:
+                  pass
+                nuevo_reg["Estado Justificante"] = "PENDIENTE_DRIVE"
+                aviso_justificante = (
+                    "El gasto y el justificante ya están protegidos en la base segura. "
+                    "Drive se reintentará desde Administración cuando la autorización esté lista."
+                )
               st.session_state.gastos = pd.concat(
                   [st.session_state.gastos, pd.DataFrame([nuevo_reg])], ignore_index=True,
               )
+            else:
+              aviso_justificante = "El gasto queda pendiente de revisión en el panel de administración."
             st.success("¡Gasto registrado con éxito!")
             registrar_auditoria(
                 "gasto_registrado", usuario_actual, str(nuevo_reg.get("ID", id_nuevo))
             )
-            st.info(
-                "El gasto queda pendiente de revisión en el panel de administración."
-            )
+            st.info(aviso_justificante)
           else:
             if not usar_almacenamiento_supabase(storage):
               st.session_state.gastos = st.session_state.gastos.iloc[:-1]
-            if drive_file_id and almacenamiento_drive:
-              almacenamiento_drive.delete_uploaded_file(drive_file_id)
-            try:
-              if path_destino:
-                os.remove(path_destino)
-            except OSError:
-              pass
             st.error("No se ha podido guardar el gasto. Inténtalo de nuevo.")
 
   with tab_sub_hist:
@@ -2702,6 +2720,16 @@ with tab_admin_app:
       else:
         codigo_google = str(st.query_params.get("code", "")).strip()
         estado_google = str(st.query_params.get("state", "")).strip()
+        error_google = str(st.query_params.get("error", "")).strip()
+        detalle_google = str(st.query_params.get("error_description", "")).strip()
+        if error_google:
+          # Google devuelve esta información en la URL de retorno. Se muestra
+          # sin credenciales y se limpia para que no rompa sesiones posteriores.
+          st.error(
+              "Google no completó la autorización. "
+              + (detalle_google[:300] if detalle_google else "Vuelve a iniciarla desde este panel.")
+          )
+          st.query_params.clear()
         if codigo_google or estado_google:
           if not (codigo_google and estado_google):
             st.error("Google no ha devuelto una autorización completa. Iníciala de nuevo.")
@@ -2710,8 +2738,18 @@ with tab_admin_app:
               permiso_cifrado = exchange_code_for_encrypted_token(
                   configuracion_drive_oauth, codigo_google, estado_google
               )
-              almacenamiento_seguro.guardar_token_google_drive_cifrado(
-                  permiso_cifrado, usuario_actual
+              credenciales_drive = credentials_from_encrypted_token(
+                  configuracion_drive_oauth, permiso_cifrado
+              )
+              # Antes de guardar el permiso se comprueba Drive y se crea la
+              # carpeta propia de SAFARA. Un permiso incompleto nunca queda activo.
+              preparacion_drive = GoogleSafaraStorage(
+                  GoogleStorageConfig.from_secrets(st.secrets),
+                  drive_credentials=credenciales_drive,
+              )
+              carpeta_id = preparacion_drive.crear_carpeta_justificantes_propietaria()
+              almacenamiento_seguro.guardar_autorizacion_google_drive(
+                  permiso_cifrado, carpeta_id, usuario_actual
               )
               reiniciar_almacenamiento_drive()
               st.query_params.clear()
@@ -2721,8 +2759,10 @@ with tab_admin_app:
               st.error(str(error))
 
         try:
+          autorizacion_guardada = almacenamiento_seguro.obtener_autorizacion_google_drive()
           drive_autorizado = bool(
-              almacenamiento_seguro.obtener_token_google_drive_cifrado()
+              autorizacion_guardada.get("token_cifrado")
+              and autorizacion_guardada.get("carpeta_id")
           )
         except SupabaseStorageOperationError:
           drive_autorizado = False
@@ -2742,6 +2782,40 @@ with tab_admin_app:
               "Se abrirá una pestaña segura: elige la cuenta propietaria de la carpeta de SAFARA. "
               "Tu sesión de esta pestaña se conservará aunque la autorización falle o se cancele."
           )
+
+        if drive_autorizado:
+          try:
+            justificantes_pendientes = almacenamiento_seguro.listar_justificantes_pendientes()
+          except SupabaseStorageOperationError:
+            justificantes_pendientes = []
+          if justificantes_pendientes:
+            st.warning(
+                f"Hay {len(justificantes_pendientes)} justificante(s) protegidos pendientes de Drive."
+            )
+            if st.button("REINTENTAR JUSTIFICANTES PENDIENTES"):
+              almacenamiento_drive = obtener_almacenamiento_drive()
+              completados = 0
+              for pendiente in justificantes_pendientes:
+                try:
+                  archivo = almacenamiento_seguro.obtener_justificante_pendiente(
+                      int(pendiente["gasto_id"])
+                  )
+                  if not archivo or not almacenamiento_drive:
+                    raise StorageOperationError("Drive no está disponible todavía.")
+                  drive_file_id, enlace = almacenamiento_drive.upload_receipt(
+                      str(archivo["nombre_fichero"]), bytes(archivo["contenido"]),
+                      str(archivo.get("mime_type") or "application/octet-stream"),
+                  )
+                  almacenamiento_seguro.confirmar_justificante_drive(
+                      int(pendiente["gasto_id"]), drive_file_id, enlace
+                  )
+                  completados += 1
+                except (StorageOperationError, SupabaseStorageOperationError) as error:
+                  almacenamiento_seguro.marcar_justificante_pendiente(
+                      int(pendiente["gasto_id"]), str(error)
+                  )
+              st.success(f"Justificantes enviados a Drive: {completados}.")
+              st.rerun()
 
     st.markdown("#### Crear código de alta")
     st.caption(

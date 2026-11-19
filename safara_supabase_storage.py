@@ -224,6 +224,22 @@ class SupabaseSafaraStorage:
 
         return str(self._run(callback) or "")
 
+    def obtener_autorizacion_google_drive(self) -> dict[str, str]:
+        """Devuelve solo el permiso cifrado y la carpeta creada por la aplicación."""
+        def callback(cursor):
+            cursor.execute(
+                "select token_cifrado, carpeta_id from safara.google_drive_oauth where id = 1"
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {"token_cifrado": "", "carpeta_id": ""}
+            return {
+                "token_cifrado": str(row.get("token_cifrado") or ""),
+                "carpeta_id": str(row.get("carpeta_id") or ""),
+            }
+
+        return self._run(callback)
+
     def guardar_token_google_drive_cifrado(self, token_cifrado: str, actor: str) -> None:
         """Registra un permiso de Drive cifrado, solo tras comprobar administración en BD."""
         if not token_cifrado:
@@ -259,6 +275,46 @@ class SupabaseSafaraStorage:
 
         self._run(callback)
 
+    def guardar_autorizacion_google_drive(
+        self, token_cifrado: str, carpeta_id: str, actor: str
+    ) -> None:
+        """Guarda una autorización ya verificada junto a su carpeta propia."""
+        if not token_cifrado or not carpeta_id:
+            raise SupabaseStorageOperationError(
+                "Google Drive no devolvió una autorización completa."
+            )
+
+        def callback(cursor):
+            cursor.execute(
+                """select id from safara.usuarios
+                   where lower(btrim(nombre)) = lower(btrim(%s)) and activo and rol = 'admin'""",
+                (actor,),
+            )
+            admin = cursor.fetchone()
+            if not admin:
+                raise SupabaseStorageOperationError(
+                    "Solo una persona administradora puede autorizar Google Drive."
+                )
+            cursor.execute(
+                """insert into safara.google_drive_oauth
+                   (id, token_cifrado, carpeta_id, autorizado_por, actualizado_en)
+                   values (1, %s, %s, %s, now())
+                   on conflict (id) do update set
+                     token_cifrado = excluded.token_cifrado,
+                     carpeta_id = excluded.carpeta_id,
+                     autorizado_por = excluded.autorizado_por,
+                     actualizado_en = now()""",
+                (token_cifrado, carpeta_id, admin["id"]),
+            )
+            cursor.execute(
+                """insert into safara.auditoria (evento, usuario_id, detalle)
+                   values ('autorizacion_google_drive_verificada', %s,
+                   'Permiso y carpeta privada de Drive verificados')""",
+                (admin["id"],),
+            )
+
+        self._run(callback)
+
     def _user_id(self, cursor, nombre: str):
         cursor.execute(
             """select id from safara.usuarios
@@ -287,7 +343,8 @@ class SupabaseSafaraStorage:
             "Gastos": """select g.id as \"ID\", g.fecha as \"Fecha\", u.nombre as \"Usuario\",
                 g.concepto as \"Concepto\", g.importe as \"Importe\", g.fichero as \"Fichero\",
                 g.estado_reembolso as \"Reembolsado\", coalesce(g.enlace_ticket, '') as \"Enlace Ticket\",
-                coalesce(g.drive_file_id, '') as \"Drive File ID\", coalesce(g.mime_type, '') as \"MIME Type\"
+                coalesce(g.drive_file_id, '') as \"Drive File ID\", coalesce(g.mime_type, '') as \"MIME Type\",
+                g.estado_justificante as \"Estado Justificante\"
                 from safara.gastos g join safara.usuarios u on u.id=g.usuario_id order by g.fecha desc, g.id desc""",
             "Confesionario": """select u.nombre as usuario, c.mensaje, c.creado_en as fecha
                 from safara.confesionario c join safara.usuarios u on u.id=c.usuario_id
@@ -513,6 +570,107 @@ class SupabaseSafaraStorage:
             record = dict(data)
             record["ID"] = int(cursor.fetchone()["id"])
             return record
+        return self._run(callback)
+
+    def crear_gasto_con_justificante_pendiente(
+        self, data: dict[str, Any], contenido: bytes
+    ) -> dict[str, Any]:
+        """Confirma primero el gasto y conserva el archivo hasta que Drive responda.
+
+        No se vuelve a pedir al usuario un ticket que ya ha enviado cuando Google
+        tenga una incidencia temporal.
+        """
+        if not contenido or len(contenido) > 10 * 1024 * 1024:
+            raise SupabaseStorageOperationError("El justificante no tiene un tamaño válido.")
+
+        def callback(cursor):
+            cursor.execute(
+                """insert into safara.gastos
+                   (fecha, usuario_id, concepto, importe, fichero, estado_reembolso,
+                    enlace_ticket, drive_file_id, mime_type, estado_justificante)
+                   values (%s,%s,%s,%s,%s,%s,null,null,%s,'PENDIENTE_DRIVE') returning id""",
+                (
+                    self._as_date(data["Fecha"]), self._user_id(cursor, data["Usuario"]),
+                    data["Concepto"], data["Importe"], data["Fichero"],
+                    data["Reembolsado"], data.get("MIME Type") or None,
+                ),
+            )
+            gasto_id = int(cursor.fetchone()["id"])
+            cursor.execute(
+                """insert into safara.justificantes_pendientes
+                   (gasto_id, contenido, nombre_fichero, mime_type)
+                   values (%s, %s, %s, %s)""",
+                (gasto_id, contenido, data["Fichero"], data.get("MIME Type") or None),
+            )
+            record = dict(data)
+            record["ID"] = gasto_id
+            record["Estado Justificante"] = "PENDIENTE_DRIVE"
+            return record
+
+        return self._run(callback)
+
+    def obtener_justificante_pendiente(self, gasto_id: int) -> dict[str, Any] | None:
+        def callback(cursor):
+            cursor.execute(
+                """select gasto_id, contenido, nombre_fichero, mime_type, intentos
+                   from safara.justificantes_pendientes where gasto_id = %s""",
+                (int(gasto_id),),
+            )
+            return cursor.fetchone()
+
+        return self._run(callback)
+
+    def confirmar_justificante_drive(
+        self, gasto_id: int, drive_file_id: str, enlace_ticket: str
+    ) -> None:
+        if not drive_file_id:
+            raise SupabaseStorageOperationError("Drive no devolvió el identificador del justificante.")
+
+        def callback(cursor):
+            cursor.execute(
+                """update safara.gastos set drive_file_id=%s, enlace_ticket=%s,
+                   estado_justificante='GUARDADO' where id=%s""",
+                (drive_file_id, enlace_ticket or None, int(gasto_id)),
+            )
+            if cursor.rowcount != 1:
+                raise SupabaseStorageOperationError("No se encuentra el gasto que se iba a actualizar.")
+            cursor.execute(
+                "delete from safara.justificantes_pendientes where gasto_id=%s", (int(gasto_id),)
+            )
+
+        self._run(callback)
+
+    def marcar_justificante_pendiente(self, gasto_id: int, error: str) -> None:
+        """Anota el fallo sin borrar el justificante pendiente ni bloquear al usuario."""
+        def callback(cursor):
+            cursor.execute(
+                """update safara.justificantes_pendientes
+                   set intentos = intentos + 1, ultimo_error = %s, actualizado_en = now()
+                   where gasto_id = %s""",
+                (str(error)[:1000], int(gasto_id)),
+            )
+            cursor.execute(
+                "update safara.gastos set estado_justificante='PENDIENTE_DRIVE' where id=%s",
+                (int(gasto_id),),
+            )
+
+        self._run(callback)
+
+    def listar_justificantes_pendientes(self, limite: int = 50) -> list[dict[str, Any]]:
+        limite = max(1, min(int(limite), 100))
+
+        def callback(cursor):
+            cursor.execute(
+                """select p.gasto_id, p.nombre_fichero, p.mime_type, p.intentos,
+                          p.ultimo_error, p.actualizado_en, u.nombre as usuario
+                   from safara.justificantes_pendientes p
+                   join safara.gastos g on g.id=p.gasto_id
+                   join safara.usuarios u on u.id=g.usuario_id
+                   order by p.actualizado_en asc limit %s""",
+                (limite,),
+            )
+            return list(cursor.fetchall())
+
         return self._run(callback)
 
     def marcar_gasto_abonado(self, gasto_id: int, usuario: str) -> bool:

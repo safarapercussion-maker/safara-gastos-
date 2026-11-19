@@ -27,7 +27,9 @@ class BootSequenceTests(unittest.TestCase):
             self.assertIn("usuario_autenticado_en_sesion()", section)
 
     def test_boot_does_not_write_actuaciones(self):
-        section = APP_SOURCE.split("# --- CONFESIONARIO PERSISTENTE ---", 1)[0]
+        section = APP_SOURCE.split(
+            'if (\n    "actuaciones" not in st.session_state', 1
+        )[1].split("# --- CONFESIONARIO PERSISTENTE ---", 1)[0]
         self.assertNotIn("guardar_actuaciones_excel()", section)
 
     def test_google_return_reloads_after_restoring_the_session(self):

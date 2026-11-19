@@ -50,7 +50,7 @@ class AnnualReceiptTests(unittest.TestCase):
     def test_drive_archive_uses_a_root_and_year_folder_without_changing_file_ids(self):
         self.assertIn('body={"name": "RECIBOS SAFARA"}', GOOGLE_SOURCE)
         self.assertIn("def _carpeta_anual", GOOGLE_SOURCE)
-        self.assertIn("addParents=carpeta_anual", GOOGLE_SOURCE)
+        self.assertIn('"addParents": carpeta_anual', GOOGLE_SOURCE)
         self.assertIn("f\"{referencia}_ticket{extension}\"", (ROOT / "safara_supabase_storage.py").read_text(encoding="utf-8"))
 
 

@@ -630,6 +630,11 @@ def reiniciar_estado_si_cambia_backend():
 reiniciar_estado_si_cambia_backend()
 
 
+def usuario_autenticado_en_sesion():
+  """Evita cargar módulos de trabajo antes de que exista una sesión válida."""
+  return bool(st.session_state.get("usuario_autenticado"))
+
+
 def guardar_excel_atomico(dataframe, destino):
   """Evita dejar un Excel incompleto si la escritura se interrumpe."""
   temporal = f"{destino}.tmp.xlsx"
@@ -680,7 +685,10 @@ def registrar_auditoria(evento, usuario="", detalle=""):
     pass
 
 # --- INICIALIZACIÓN DE VOTOS ---
-if "votos_historial" not in st.session_state:
+# Los datos de trabajo no son necesarios para identificar a una persona. Cargarlos
+# antes del acceso multiplicaba consultas y mostraba fallos de infraestructura en
+# la pantalla pública. Se inicializan en el primer rerun posterior al acceso.
+if "votos_historial" not in st.session_state and usuario_autenticado_en_sesion():
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
     try:
@@ -1169,12 +1177,11 @@ def cargar_actuaciones_desde_fuentes():
   return acts
 
 
-if "actuaciones" not in st.session_state:
+if "actuaciones" not in st.session_state and usuario_autenticado_en_sesion():
   st.session_state.actuaciones = cargar_actuaciones_desde_fuentes()
-  guardar_actuaciones_excel()
 
 # --- CONFESIONARIO PERSISTENTE ---
-if "confesionario_mensajes" not in st.session_state:
+if "confesionario_mensajes" not in st.session_state and usuario_autenticado_en_sesion():
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
     try:
@@ -1211,7 +1218,7 @@ def guardar_confesionario_excel():
     return False
 
 
-if "gastos" not in st.session_state:
+if "gastos" not in st.session_state and usuario_autenticado_en_sesion():
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
     try:
@@ -1259,7 +1266,7 @@ if "gastos" not in st.session_state:
         ]
     )
 
-if "saldo_caja" not in st.session_state:
+if "saldo_caja" not in st.session_state and usuario_autenticado_en_sesion():
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
     try:

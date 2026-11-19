@@ -10,6 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_SOURCE = (
     ROOT / "supabase" / "migrations" / "20261119224000_add_annual_receipt_references.sql"
 ).read_text(encoding="utf-8")
+SAFETY_NET_SOURCE = (
+    ROOT / "supabase" / "migrations" / "20261120090000_add_expense_reference_safety_net.sql"
+).read_text(encoding="utf-8")
 GOOGLE_SOURCE = (ROOT / "safara_google_storage.py").read_text(encoding="utf-8")
 
 
@@ -29,6 +32,11 @@ class AnnualReceiptTests(unittest.TestCase):
         self.assertIn("referencia_anual", MIGRATION_SOURCE)
         self.assertIn("gastos_referencia_anual_formato", MIGRATION_SOURCE)
         self.assertIn("gastos_referencia_anual_unica_idx", MIGRATION_SOURCE)
+
+    def test_database_completes_a_reference_during_a_staggered_deployment(self):
+        self.assertIn("asignar_referencia_anual_gasto", SAFETY_NET_SOURCE)
+        self.assertIn("before insert on safara.gastos", SAFETY_NET_SOURCE)
+        self.assertIn("pg_advisory_xact_lock", SAFETY_NET_SOURCE)
 
     def test_new_ticket_name_keeps_only_safe_extension(self):
         self.assertEqual(

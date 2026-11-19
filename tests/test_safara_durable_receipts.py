@@ -38,6 +38,11 @@ class DurableReceiptTests(unittest.TestCase):
         )[0]
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", ticket_form)
 
+    def test_admin_open_recovers_pending_google_report_updates(self):
+        admin_panel = APP_SOURCE.split("with tab_admin_app:", 1)[1]
+        self.assertIn("recupera también cualquier actualización que", admin_panel)
+        self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", admin_panel)
+
     def test_supabase_detection_survives_a_streamlit_code_reload(self):
         self.assertIn("_SUPABASE_BACKEND_VERSION", APP_SOURCE)
         self.assertIn('"__name__", "") == "SupabaseSafaraStorage"', APP_SOURCE)

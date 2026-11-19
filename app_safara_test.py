@@ -2746,6 +2746,10 @@ with tab_admin_app:
     st.info("Esta sección está disponible solo para personas administradoras.")
   else:
     st.success("Acceso de Administración Autorizado")
+    # Al abrir Administración se recupera también cualquier actualización que
+    # hubiera quedado pendiente (por ejemplo, un gasto registrado justo antes
+    # de publicar esta mejora), sin exigir otro registro de prueba.
+    actualizar_informes_y_copias_en_segundo_plano()
 
     st.markdown("#### Autorizar justificantes en Google Drive")
     st.caption(
@@ -2797,6 +2801,7 @@ with tab_admin_app:
               reiniciar_almacenamiento_drive()
               st.query_params.clear()
               registrar_auditoria("google_drive_autorizado", usuario_actual)
+              actualizar_informes_y_copias_en_segundo_plano()
               st.success("Google Drive ha quedado autorizado para guardar justificantes.")
             except (GoogleDriveOAuthOperationError, SupabaseStorageOperationError) as error:
               st.error(str(error))

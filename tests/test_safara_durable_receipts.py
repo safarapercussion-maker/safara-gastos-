@@ -38,9 +38,11 @@ class DurableReceiptTests(unittest.TestCase):
         )[0]
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", ticket_form)
 
-    def test_admin_open_recovers_pending_google_report_updates(self):
+    def test_admin_keeps_google_refresh_as_an_explicit_fast_action(self):
         admin_panel = APP_SOURCE.split('if seccion_activa == "Administración":', 1)[1]
-        self.assertIn("recupera también cualquier actualización que", admin_panel)
+        initial_admin = admin_panel.split('st.markdown("#### Autorizar justificantes', 1)[0]
+        self.assertNotIn("actualizar_informes_y_copias_en_segundo_plano()", initial_admin)
+        self.assertIn("ACTUALIZAR INFORMES AHORA", admin_panel)
         self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", admin_panel)
 
     def test_admin_retries_protected_receipts_only_on_explicit_request(self):

@@ -39,14 +39,13 @@ class BootSequenceTests(unittest.TestCase):
         )[0]
         self.assertIn("st.rerun()", section)
 
-    def test_login_checks_pending_google_reports_without_opening_admin(self):
+    def test_login_does_not_open_google_before_the_person_uses_the_app(self):
         marker = "usuario_actual = st.session_state.usuario_autenticado"
         section = APP_SOURCE.split(marker, 1)[1].split(
             'hoy_act = datetime.datetime.now', 1
         )[0]
-        self.assertIn("actualizar_informes_y_copias_en_segundo_plano()", section)
-        self.assertIn("mantenimiento_google_comprobado", section)
-        self.assertIn("version_mantenimiento_google = version_backend_supabase()", section)
+        self.assertNotIn("actualizar_informes_y_copias_en_segundo_plano()", section)
+        self.assertIn("Nunca se ejecuta al entrar", section)
 
     def test_admin_status_is_safe_when_a_previous_cached_connection_is_present(self):
         marker = "# Estado breve y seguro: ayuda a comprobar el circuito completo"

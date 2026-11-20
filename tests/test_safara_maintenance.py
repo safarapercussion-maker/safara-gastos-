@@ -74,9 +74,19 @@ class MaintenanceTests(unittest.TestCase):
             "actuaciones": [],
         })
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            self.assertEqual(set(archive.namelist()), {"gastos.csv", "caja.csv", "actuaciones.csv", "MANIFIESTO.json"})
+            self.assertEqual(
+                set(archive.namelist()),
+                {
+                    "gastos.csv",
+                    "caja.csv",
+                    "actuaciones.csv",
+                    "SAFARA_Archivo_Financiero.xlsx",
+                    "MANIFIESTO.json",
+                },
+            )
             manifest = json.loads(archive.read("MANIFIESTO.json"))
             gastos_csv = archive.read("gastos.csv")
+            self.assertGreater(len(archive.read("SAFARA_Archivo_Financiero.xlsx")), 0)
         self.assertEqual(manifest["contenido"]["gastos"], 1)
         self.assertIn("gastos.csv", manifest["sha256_archivos"])
         self.assertEqual(

@@ -629,7 +629,9 @@ def obtener_ejecutor_mantenimiento_google():
   return ThreadPoolExecutor(max_workers=1, thread_name_prefix="safara-google")
 
 
-def ejecutar_mantenimiento_google_configurado(database, google_config, oauth_config):
+def ejecutar_mantenimiento_google_configurado(
+    database, google_config, oauth_config, forzar_justificantes=False
+):
   """Prepara Google fuera del recorrido de la persona usuaria."""
   try:
     credenciales_drive = None
@@ -646,12 +648,14 @@ def ejecutar_mantenimiento_google_configurado(database, google_config, oauth_con
         drive_credentials=credenciales_drive,
         receipts_folder_id=carpeta_id,
     )
-    return run_google_maintenance(database, google)
+    return run_google_maintenance(
+        database, google, forzar_justificantes=forzar_justificantes
+    )
   except Exception:
     return False
 
 
-def actualizar_informes_y_copias_en_segundo_plano():
+def actualizar_informes_y_copias_en_segundo_plano(forzar_justificantes=False):
   """Programa Google como copia de consulta sin frenar ninguna pantalla."""
   global _google_maintenance_future
   if not supabase_storage_enabled(st.secrets):
@@ -672,7 +676,11 @@ def actualizar_informes_y_copias_en_segundo_plano():
     except GoogleDriveOAuthConfigurationError:
       oauth_config = None
     _google_maintenance_future = obtener_ejecutor_mantenimiento_google().submit(
-        ejecutar_mantenimiento_google_configurado, database, google_config, oauth_config
+        ejecutar_mantenimiento_google_configurado,
+        database,
+        google_config,
+        oauth_config,
+        bool(forzar_justificantes),
     )
     return True
   except Exception:
@@ -682,39 +690,10 @@ def actualizar_informes_y_copias_en_segundo_plano():
 
 
 def reintentar_justificantes_pendientes_sin_interrumpir(database):
-  """Reintenta tickets ya protegidos sin afectar a la sesión ni al gasto."""
+  """Programa un reintento en segundo plano, sin bloquear Administración."""
   if not usar_almacenamiento_supabase(database):
-    return 0
-  try:
-    pendientes = database.listar_justificantes_pendientes()
-    if not pendientes:
-      return 0
-    drive = obtener_almacenamiento_drive()
-    if not drive:
-      return 0
-  except (StorageOperationError, SupabaseStorageOperationError):
-    return 0
-
-  completados = 0
-  for pendiente in pendientes:
-    try:
-      archivo = database.obtener_justificante_pendiente(int(pendiente["gasto_id"]))
-      if not archivo:
-        continue
-      drive_file_id, enlace = drive.upload_receipt(
-          str(archivo["nombre_fichero"]), bytes(archivo["contenido"]),
-          str(archivo.get("mime_type") or "application/octet-stream"),
-      )
-      database.confirmar_justificante_drive(
-          int(pendiente["gasto_id"]), drive_file_id, enlace
-      )
-      completados += 1
-    except (StorageOperationError, SupabaseStorageOperationError) as error:
-      try:
-        database.marcar_justificante_pendiente(int(pendiente["gasto_id"]), str(error))
-      except SupabaseStorageOperationError:
-        pass
-  return completados
+    return False
+  return actualizar_informes_y_copias_en_segundo_plano(forzar_justificantes=True)
 
 
 # Los informes se actualizan al terminar acciones que cambian datos. El bloqueo
@@ -2856,35 +2835,14 @@ if seccion_activa == "Caja & Finanzas":
             st.stop()
           if gasto_guardado:
             if usar_almacenamiento_supabase(storage):
-              almacenamiento_drive = (
-                  obtener_almacenamiento_drive() if google_storage_enabled(st.secrets) else None
+              # El gasto y el archivo ya se confirmaron juntos en Supabase.
+              # Drive se procesa por la cola privada en segundo plano: una
+              # respuesta de Google lenta no bloquea a quien registra el gasto.
+              nuevo_reg["Estado Justificante"] = "PENDIENTE_DRIVE"
+              aviso_justificante = (
+                  "Gasto y justificante protegidos. Se archivará automáticamente "
+                  "en Drive sin bloquear esta pantalla."
               )
-              try:
-                if not almacenamiento_drive:
-                  raise StorageOperationError(
-                      _google_storage_error or "Google Drive está pendiente de autorización."
-                  )
-                drive_file_id, enlace_excel = almacenamiento_drive.upload_receipt(
-                    str(nuevo_reg["Fichero"]), contenido_fichero, mime_type
-                )
-                storage.confirmar_justificante_drive(
-                    int(nuevo_reg["ID"]), drive_file_id, enlace_excel
-                )
-                nuevo_reg["Drive File ID"] = drive_file_id
-                nuevo_reg["Enlace Ticket"] = enlace_excel
-                nuevo_reg["Estado Justificante"] = "GUARDADO"
-                aviso_justificante = "Justificante guardado de forma segura en Drive."
-              except (StorageOperationError, SupabaseStorageOperationError) as error:
-                detalle_drive = str(error).strip() or "Drive no está disponible temporalmente."
-                try:
-                  storage.marcar_justificante_pendiente(int(nuevo_reg["ID"]), detalle_drive)
-                except SupabaseStorageOperationError:
-                  pass
-                nuevo_reg["Estado Justificante"] = "PENDIENTE_DRIVE"
-                aviso_justificante = (
-                    "El gasto y el justificante ya están protegidos en la base segura. "
-                    "Drive se reintentará desde Administración cuando la autorización esté lista."
-                )
               st.session_state.gastos = pd.concat(
                   [st.session_state.gastos, pd.DataFrame([nuevo_reg])], ignore_index=True,
               )
@@ -3199,13 +3157,16 @@ if seccion_activa == "Administración":
                 f"Hay {len(justificantes_pendientes)} justificante(s) protegidos pendientes de Drive."
             )
             if st.button("REINTENTAR JUSTIFICANTES PENDIENTES"):
-              completados = reintentar_justificantes_pendientes_sin_interrumpir(
+              reintento_programado = reintentar_justificantes_pendientes_sin_interrumpir(
                   almacenamiento_seguro
               )
-              if completados:
-                actualizar_informes_y_copias_en_segundo_plano()
-              st.success(f"Justificantes enviados a Drive: {completados}.")
-              st.rerun()
+              if reintento_programado:
+                st.success(
+                    "Reintento iniciado en segundo plano. Puedes continuar usando "
+                    "la aplicación mientras los justificantes se archivan."
+                )
+              else:
+                st.info("El reintento ya está en curso o Drive no está disponible todavía.")
 
     st.markdown("#### Crear código de alta")
     st.caption(

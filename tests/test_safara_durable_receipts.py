@@ -7,6 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 APP_SOURCE = (ROOT / "app_safara_test.py").read_text(encoding="utf-8")
 STORAGE_SOURCE = (ROOT / "safara_google_storage.py").read_text(encoding="utf-8")
+MAINTENANCE_SOURCE = (ROOT / "safara_maintenance.py").read_text(encoding="utf-8")
 MIGRATION_SOURCE = (
     ROOT / "supabase" / "migrations" / "20261119100500_add_durable_receipt_queue.sql"
 ).read_text(encoding="utf-8")
@@ -19,10 +20,15 @@ class DurableReceiptTests(unittest.TestCase):
         self.assertIn("using (false)", MIGRATION_SOURCE)
         self.assertIn("octet_length(contenido) between 1 and 10485760", MIGRATION_SOURCE)
 
-    def test_expense_is_protected_before_drive_upload(self):
-        saved = APP_SOURCE.index("crear_gasto_con_justificante_pendiente")
-        uploaded = APP_SOURCE.index("almacenamiento_drive.upload_receipt", saved)
-        self.assertLess(saved, uploaded)
+    def test_expense_is_protected_and_drive_is_background_work(self):
+        ticket_form = APP_SOURCE.split('with tab_sub_reg:', 1)[1].split(
+            'with tab_sub_hist:', 1
+        )[0]
+        saved = ticket_form.index("crear_gasto_con_justificante_pendiente")
+        scheduled = ticket_form.index("actualizar_informes_y_copias_en_segundo_plano()")
+        self.assertLess(saved, scheduled)
+        self.assertNotIn("upload_receipt(", ticket_form)
+        self.assertIn("sincronizar_justificantes_pendientes", MAINTENANCE_SOURCE)
         self.assertIn("REINTENTAR JUSTIFICANTES PENDIENTES", APP_SOURCE)
 
     def test_ticket_form_never_falls_back_to_the_legacy_writer(self):
@@ -53,12 +59,17 @@ class DurableReceiptTests(unittest.TestCase):
         self.assertNotIn("reintentar_justificantes_pendientes_sin_interrumpir(", before_button)
 
     def test_google_reporting_is_scheduled_without_blocking_the_screen(self):
-        maintenance = APP_SOURCE.split("def actualizar_informes_y_copias_en_segundo_plano():", 1)[1].split(
+        maintenance = APP_SOURCE.split("def actualizar_informes_y_copias_en_segundo_plano(", 1)[1].split(
             "def reintentar_justificantes_pendientes_sin_interrumpir", 1
         )[0]
         self.assertIn("ThreadPoolExecutor", APP_SOURCE)
         self.assertIn(".submit(", maintenance)
         self.assertNotIn("return run_google_maintenance", maintenance)
+
+    def test_pending_receipts_are_reserved_before_a_background_drive_upload(self):
+        self.assertIn("reservar_justificantes_pendientes", MAINTENANCE_SOURCE)
+        self.assertIn("forzar_justificantes", MAINTENANCE_SOURCE)
+        self.assertIn("for update skip locked", (ROOT / "safara_supabase_storage.py").read_text(encoding="utf-8"))
 
     def test_primary_sections_are_loaded_only_when_opened(self):
         self.assertIn('seccion_activa = st.radio(', APP_SOURCE)

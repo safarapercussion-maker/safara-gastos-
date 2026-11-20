@@ -77,14 +77,53 @@ def crear_paquete_financiero_descargable(
 _create_financial_archive = crear_paquete_financiero_descargable
 
 
+def sincronizar_justificantes_pendientes(
+    database: SupabaseSafaraStorage,
+    google: GoogleSafaraStorage,
+    forzar: bool = False,
+) -> int:
+    """Envía a Drive tickets ya protegidos, sin frenar a quien registra gasto.
+
+    Cada ticket se reserva en Supabase antes del envío. Si Drive tiene una
+    incidencia, el archivo permanece en la cola privada con una próxima fecha
+    de reintento; nunca se pierde ni se duplica.
+    """
+    completados = 0
+    for pendiente in database.reservar_justificantes_pendientes(
+        limite=10, forzar=forzar
+    ):
+        gasto_id = int(pendiente["gasto_id"])
+        try:
+            drive_file_id, enlace = google.upload_receipt(
+                str(pendiente["nombre_fichero"]),
+                bytes(pendiente["contenido"]),
+                str(pendiente.get("mime_type") or "application/octet-stream"),
+            )
+            database.confirmar_justificante_drive(gasto_id, drive_file_id, enlace)
+            completados += 1
+        except (StorageOperationError, SupabaseStorageOperationError) as error:
+            database.marcar_justificante_pendiente(gasto_id, str(error))
+    return completados
+
+
 def run_google_maintenance(
     database: SupabaseSafaraStorage,
     google: GoogleSafaraStorage | None,
+    forzar_justificantes: bool = False,
 ) -> bool:
     """Sincroniza una copia de consulta sin interrumpir ninguna acción de la app."""
     if google is None:
         return False
     try:
+        work = database.iniciar_mantenimiento_google()
+        if not work:
+            return False
+        # El ticket se envía después de haberse confirmado en Supabase y desde
+        # este hilo independiente. El formulario de gasto no espera a Drive.
+        if hasattr(database, "reservar_justificantes_pendientes"):
+            sincronizar_justificantes_pendientes(
+                database, google, forzar=forzar_justificantes
+            )
         # La organización de Drive es una mejora documental: conserva los
         # identificadores y enlaces existentes, y nunca puede bloquear los
         # informes ni una acción principal del grupo.
@@ -97,9 +136,6 @@ def run_google_maintenance(
                 )
         except Exception:
             pass
-        work = database.iniciar_mantenimiento_google()
-        if not work:
-            return False
         reports = database.obtener_informes_google()
         reports["Informe Sincronización"] = [{
             "Estado": "Sincronizado desde Supabase",
@@ -109,7 +145,18 @@ def run_google_maintenance(
         google.write_report_snapshot(reports)
         # Desde este punto los informes ya están actualizados. La copia diaria
         # de Drive es una protección adicional y no puede deshacer Sheets.
-        database.confirmar_informes_google(int(work["sheets_revision"]))
+        # Subir un ticket u organizar su nombre actualiza el gasto. Leemos la
+        # revisión final para que Sheets incluya en esta misma vuelta el enlace
+        # definitivo, en vez de esperar a otra acción de la app.
+        if hasattr(database, "estado_mantenimiento_google"):
+            revision_final = int(
+                database.estado_mantenimiento_google().get(
+                    "sheets_revision", work["sheets_revision"]
+                )
+            )
+        else:
+            revision_final = int(work["sheets_revision"])
+        database.confirmar_informes_google(revision_final)
         backup_done = False
         if work["respaldo_pendiente"]:
             try:
@@ -121,7 +168,7 @@ def run_google_maintenance(
                     str(error) or "No se pudo guardar la copia adicional de Drive."
                 )
                 return True
-        database.terminar_mantenimiento_google(int(work["sheets_revision"]), backup_done)
+        database.terminar_mantenimiento_google(revision_final, backup_done)
         return True
     except Exception as error:
         # Google es únicamente una vista de consulta y una copia adicional:

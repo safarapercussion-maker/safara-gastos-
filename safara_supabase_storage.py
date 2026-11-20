@@ -7,6 +7,7 @@ datos permanece en Streamlit Secrets y nunca se escribe en Git.
 from __future__ import annotations
 
 import datetime as dt
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -116,14 +117,24 @@ class SupabaseSafaraStorage:
 
         self._pool = ConnectionPool(
             conninfo=self._database_url,
-            min_size=0,
-            max_size=4,
-            timeout=10,
-            max_idle=120,
+            # Streamlit mantiene procesos de corta duración. Una conexión
+            # caliente evita que cada primer acceso pague el coste completo de
+            # negociar TLS con la base; el límite reducido protege el plan de
+            # pruebas cuando coinciden varias sesiones.
+            min_size=1,
+            max_size=3,
+            max_waiting=12,
+            timeout=4,
+            max_idle=60,
+            max_lifetime=900,
             kwargs={
                 "row_factory": dict_row,
                 "sslmode": "require",
                 "options": "-c search_path=safara,public",
+                # La aplicación usa el pool compartido de Supabase. Desactivar
+                # sentencias preparadas evita incompatibilidades si el secreto
+                # apunta al modo transaccional del pooler.
+                "prepare_threshold": None,
             },
         )
 
@@ -170,29 +181,35 @@ class SupabaseSafaraStorage:
     def _run(self, callback):
         if self._connection_failure is not None:
             raise self._connection_failure
-        try:
-            with self._connection() as connection:
-                with connection.cursor() as cursor:
-                    return callback(cursor)
-        except SupabaseStorageOperationError:
-            raise
-        except Exception as error:
-            if "password authentication failed" in str(error).lower():
-                failure = SupabaseStorageAuthenticationError(
-                    "La contraseña de la conexión privada de Supabase no coincide."
-                )
-                # Una contraseña errónea no se corrige sola; se evita abrir una
-                # conexión por cada interacción hasta que Streamlit reinicie con
-                # el secreto actualizado.
-                self._connection_failure = failure
-            else:
-                failure = SupabaseStorageOperationError(
-                    "No se ha podido guardar la información en Supabase."
-                )
-            # Un corte temporal de red no debe dejar toda la app marcada como
-            # fallida hasta el siguiente despliegue. La siguiente acción podrá
-            # recuperar la conexión de forma normal.
-            raise failure from error
+        last_error = None
+        # Un único reintento breve absorbe el despertar del pooler o un corte
+        # transitorio sin convertir cada clic en una espera larga.
+        for attempt in range(2):
+            try:
+                with self._connection() as connection:
+                    with connection.cursor() as cursor:
+                        return callback(cursor)
+            except SupabaseStorageOperationError:
+                raise
+            except Exception as error:
+                last_error = error
+                if "password authentication failed" in str(error).lower():
+                    failure = SupabaseStorageAuthenticationError(
+                        "La contraseña de la conexión privada de Supabase no coincide."
+                    )
+                    # Una contraseña errónea no se corrige sola; se evita abrir
+                    # una conexión por cada interacción hasta actualizar Secrets.
+                    self._connection_failure = failure
+                    raise failure from error
+                if attempt == 0:
+                    time.sleep(0.15)
+
+        # Un corte temporal de red no debe dejar toda la app marcada como
+        # fallida hasta el siguiente despliegue. La siguiente acción podrá
+        # recuperar la conexión de forma normal.
+        raise SupabaseStorageOperationError(
+            "No se ha podido guardar la información en Supabase."
+        ) from last_error
 
     def verificar_conexion_segura(self) -> bool:
         """Comprueba la conexión privada antes de habilitar operaciones críticas."""
@@ -818,6 +835,41 @@ class SupabaseSafaraStorage:
 
         return self._run(callback)
 
+    def reservar_justificantes_pendientes(
+        self, limite: int = 10, forzar: bool = False
+    ) -> list[dict[str, Any]]:
+        """Reserva tickets para un único envío de Drive sin duplicarlos.
+
+        La reserva se guarda antes de salir de la transacción. Así dos sesiones
+        de Streamlit nunca suben por error el mismo justificante a Drive.
+        """
+        limite = max(1, min(int(limite), 25))
+
+        def callback(cursor):
+            condition = "true" if forzar else "(p.proximo_intento_en is null or p.proximo_intento_en <= now())"
+            cursor.execute(
+                f"""select p.gasto_id, p.contenido, p.nombre_fichero, p.mime_type
+                       from safara.justificantes_pendientes p
+                      where {condition}
+                      order by p.actualizado_en asc
+                      limit %s for update skip locked""",
+                (limite,),
+            )
+            pendientes = list(cursor.fetchall())
+            if not pendientes:
+                return []
+            cursor.execute(
+                """update safara.justificantes_pendientes
+                      set intentos = intentos + 1, ultimo_intento_en = now(),
+                          proximo_intento_en = now() + interval '5 minutes',
+                          actualizado_en = now()
+                    where gasto_id = any(%s)""",
+                ([int(item["gasto_id"]) for item in pendientes],),
+            )
+            return pendientes
+
+        return list(self._run(callback))
+
     def confirmar_justificante_drive(
         self, gasto_id: int, drive_file_id: str, enlace_ticket: str
     ) -> None:
@@ -843,7 +895,11 @@ class SupabaseSafaraStorage:
         def callback(cursor):
             cursor.execute(
                 """update safara.justificantes_pendientes
-                   set intentos = intentos + 1, ultimo_error = %s, actualizado_en = now()
+                   set ultimo_error = %s,
+                       proximo_intento_en = now() + (
+                         least(60, power(2, least(intentos, 6))::integer) * interval '1 minute'
+                       ),
+                       actualizado_en = now()
                    where gasto_id = %s""",
                 (str(error)[:1000], int(gasto_id)),
             )
@@ -860,7 +916,7 @@ class SupabaseSafaraStorage:
         def callback(cursor):
             cursor.execute(
                 """select p.gasto_id, p.nombre_fichero, p.mime_type, p.intentos,
-                          p.ultimo_error, p.actualizado_en, u.nombre as usuario
+                          p.ultimo_error, p.proximo_intento_en, p.actualizado_en, u.nombre as usuario
                    from safara.justificantes_pendientes p
                    join safara.gastos g on g.id=p.gasto_id
                    join safara.usuarios u on u.id=g.usuario_id
@@ -887,8 +943,9 @@ class SupabaseSafaraStorage:
         """Actualiza el nombre visible de Drive sin cambiar enlace ni identificador."""
         def callback(cursor):
             cursor.execute(
-                "update safara.gastos set fichero=%s where id=%s",
-                (str(fichero)[:255], int(gasto_id)),
+                """update safara.gastos set fichero=%s
+                   where id=%s and fichero is distinct from %s""",
+                (str(fichero)[:255], int(gasto_id), str(fichero)[:255]),
             )
         self._run(callback)
 

@@ -475,6 +475,85 @@ class SupabaseSafaraStorage:
             )
         self._run(callback)
 
+    def obtener_o_crear_plan_ensayo(
+        self, ciclo_id: str, lunes: dt.date, ubicacion_predeterminada: str
+    ) -> dict[str, Any]:
+        """Obtiene el plan oficial o crea uno respetando la última sede activa."""
+        def callback(cursor):
+            cursor.execute("select pg_advisory_xact_lock(hashtext('safara-weekly-rehearsal-plan'))")
+            cursor.execute(
+                """select ciclo_id, lunes, ubicacion, estado, motivo_pausa
+                   from safara.ensayos_planificacion where ciclo_id=%s""",
+                (ciclo_id,),
+            )
+            plan = cursor.fetchone()
+            if plan:
+                return plan
+            cursor.execute(
+                """select ubicacion from safara.ensayos_planificacion
+                   where lunes < %s and estado='ACTIVO'
+                   order by lunes desc limit 1""",
+                (lunes,),
+            )
+            anterior = cursor.fetchone()
+            ubicacion = ubicacion_predeterminada
+            if anterior:
+                ultima = str(anterior.get("ubicacion") or "")
+                if ultima == "Gaztetxe de Zizur":
+                    ubicacion = "Baragazte (Barañain)"
+                elif ultima == "Baragazte (Barañain)":
+                    ubicacion = "Gaztetxe de Zizur"
+            cursor.execute(
+                """insert into safara.ensayos_planificacion
+                   (ciclo_id, lunes, ubicacion) values (%s, %s, %s)
+                   returning ciclo_id, lunes, ubicacion, estado, motivo_pausa""",
+                (ciclo_id, lunes, ubicacion),
+            )
+            return cursor.fetchone()
+        return dict(self._run(callback))
+
+    def actualizar_plan_ensayo(
+        self,
+        ciclo_id: str,
+        lunes: dt.date,
+        ubicacion: str,
+        pausado: bool,
+        motivo: str,
+        administrador: str,
+    ) -> dict[str, Any] | None:
+        """Cambia una semana abierta; nunca altera un historial ya cerrado."""
+        estado = "PAUSADO" if pausado else "ACTIVO"
+        motivo_seguro = str(motivo or "").strip()[:500] if pausado else ""
+
+        def callback(cursor):
+            cursor.execute("select pg_advisory_xact_lock(hashtext('safara-weekly-rehearsal-plan'))")
+            cursor.execute(
+                "select 1 from safara.ensayos_historial where ciclo_id=%s",
+                (ciclo_id,),
+            )
+            if cursor.fetchone():
+                return None
+            admin_id = self._user_id(cursor, administrador)
+            cursor.execute(
+                """insert into safara.ensayos_planificacion
+                   (ciclo_id, lunes, ubicacion, estado, motivo_pausa, actualizado_por)
+                   values (%s, %s, %s, %s, %s, %s)
+                   on conflict (ciclo_id) do update set
+                     lunes=excluded.lunes, ubicacion=excluded.ubicacion,
+                     estado=excluded.estado, motivo_pausa=excluded.motivo_pausa,
+                     actualizado_por=excluded.actualizado_por, actualizado_en=now()
+                   returning ciclo_id, lunes, ubicacion, estado, motivo_pausa""",
+                (ciclo_id, lunes, ubicacion, estado, motivo_seguro, admin_id),
+            )
+            cursor.execute(
+                """insert into safara.auditoria (evento, usuario_id, detalle)
+                   values ('plan_ensayo_actualizado', %s, %s)""",
+                (admin_id, f"{ciclo_id}: {estado} - {ubicacion}"),
+            )
+            return cursor.fetchone()
+        result = self._run(callback)
+        return dict(result) if result else None
+
     def cerrar_ensayo_semanal(
         self,
         ciclo_id: str,
@@ -491,6 +570,15 @@ class SupabaseSafaraStorage:
         def callback(cursor):
             cursor.execute("select pg_advisory_xact_lock(hashtext('safara-weekly-rehearsal'))")
             cursor.execute(
+                """select ubicacion, estado, motivo_pausa
+                   from safara.ensayos_planificacion where ciclo_id=%s""",
+                (ciclo_id,),
+            )
+            plan = cursor.fetchone() or {}
+            ubicacion_oficial = str(plan.get("ubicacion") or ubicacion)
+            pausado = str(plan.get("estado") or "ACTIVO") == "PAUSADO"
+            motivo = str(plan.get("motivo_pausa") or "") if pausado else ""
+            cursor.execute(
                 """select count(*)::integer as asistentes,
                           count(*) filter (where u.instrumento = 'Repenike')::integer as repenikes,
                           count(*) filter (where u.instrumento = 'Caja')::integer as cajas
@@ -505,20 +593,20 @@ class SupabaseSafaraStorage:
             repenikes = int(resumen["repenikes"] or 0)
             cajas = int(resumen["cajas"] or 0)
             estado = (
-                "CONFIRMADO"
+                "PAUSADO" if pausado else "CONFIRMADO"
                 if asistentes >= quorum_minimo and repenikes >= 1 and cajas >= 1
                 else "NO_REALIZADO"
             )
             cursor.execute(
                 """insert into safara.ensayos_historial
-                   (ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                   (ciclo_id, fecha, hora_cierre, ubicacion, estado, motivo,
                     asistentes_confirmados, repenikes_confirmados, cajas_confirmadas)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                    on conflict (ciclo_id) do nothing
-                   returning ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                   returning ciclo_id, fecha, hora_cierre, ubicacion, estado, motivo,
                              asistentes_confirmados, repenikes_confirmados,
                              cajas_confirmadas, cerrado_en""",
-                (ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                (ciclo_id, fecha, hora_cierre, ubicacion_oficial, estado, motivo,
                  asistentes, repenikes, cajas),
             )
             cerrado = cursor.fetchone()
@@ -531,7 +619,7 @@ class SupabaseSafaraStorage:
                 )
                 return cerrado
             cursor.execute(
-                """select ciclo_id, fecha, hora_cierre, ubicacion, estado,
+                """select ciclo_id, fecha, hora_cierre, ubicacion, estado, motivo,
                           asistentes_confirmados, repenikes_confirmados,
                           cajas_confirmadas, cerrado_en
                    from safara.ensayos_historial where ciclo_id = %s""",
@@ -547,11 +635,17 @@ class SupabaseSafaraStorage:
 
         def callback(cursor):
             cursor.execute(
-                """select ciclo_id, fecha, hora_cierre, ubicacion, estado,
-                          asistentes_confirmados, repenikes_confirmados,
-                          cajas_confirmadas, cerrado_en
-                   from safara.ensayos_historial
-                   order by fecha desc limit %s""",
+                """select h.ciclo_id, h.fecha, h.hora_cierre, h.ubicacion, h.estado,
+                          h.motivo,
+                          h.asistentes_confirmados, h.repenikes_confirmados,
+                          h.cajas_confirmadas, h.cerrado_en,
+                          count(a.usuario_id)::integer as asistentes_reales
+                   from safara.ensayos_historial h
+                   left join safara.ensayos_asistencias a on a.ciclo_id=h.ciclo_id
+                   group by h.ciclo_id, h.fecha, h.hora_cierre, h.ubicacion, h.estado,
+                            h.motivo, h.asistentes_confirmados, h.repenikes_confirmados,
+                            h.cajas_confirmadas, h.cerrado_en
+                   order by h.fecha desc limit %s""",
                 (limite,),
             )
             rows = list(cursor.fetchall())
@@ -562,6 +656,70 @@ class SupabaseSafaraStorage:
             return rows
 
         return self._run(callback)
+
+    def candidatos_asistencia_ensayo(self, ciclo_id: str) -> list[dict[str, Any]]:
+        """Lista personas activas y marca las que confirmaron la encuesta."""
+        def callback(cursor):
+            cursor.execute(
+                """select u.nombre,
+                    exists(select 1 from safara.votos v
+                           where v.encuesta_id='ensayo_proximo' and v.ciclo_id=%s
+                             and v.usuario_id=u.id and v.respuesta='SI') as confirmado,
+                    exists(select 1 from safara.ensayos_asistencias a
+                           where a.ciclo_id=%s and a.usuario_id=u.id) as asistio
+                   from safara.usuarios u where u.activo order by lower(u.nombre)""",
+                (ciclo_id, ciclo_id),
+            )
+            return list(cursor.fetchall())
+        return [dict(row) for row in self._run(callback)]
+
+    def confirmar_asistencias_ensayo(
+        self, ciclo_id: str, asistentes: list[str], administrador: str
+    ) -> int:
+        """Sustituye la lista oficial de asistencia; un punto equivale a una asistencia."""
+        nombres = sorted({str(nombre).strip() for nombre in asistentes if str(nombre).strip()})
+
+        def callback(cursor):
+            cursor.execute("select pg_advisory_xact_lock(hashtext('safara-weekly-rehearsal-attendance'))")
+            cursor.execute(
+                "select estado from safara.ensayos_historial where ciclo_id=%s for update",
+                (ciclo_id,),
+            )
+            historial = cursor.fetchone()
+            if not historial or historial["estado"] != "CONFIRMADO":
+                return -1
+            admin_id = self._user_id(cursor, administrador)
+            usuarios = [self._user_id(cursor, nombre) for nombre in nombres]
+            cursor.execute("delete from safara.ensayos_asistencias where ciclo_id=%s", (ciclo_id,))
+            for usuario_id in usuarios:
+                cursor.execute(
+                    """insert into safara.ensayos_asistencias
+                       (ciclo_id, usuario_id, confirmado_por) values (%s, %s, %s)""",
+                    (ciclo_id, usuario_id, admin_id),
+                )
+            cursor.execute(
+                """insert into safara.auditoria (evento, usuario_id, detalle)
+                   values ('asistencia_ensayo_confirmada', %s, %s)""",
+                (admin_id, f"{ciclo_id}: {len(usuarios)} asistencia(s) confirmada(s)"),
+            )
+            return len(usuarios)
+        return int(self._run(callback))
+
+    def obtener_puntuacion_ensayos(self, limite: int = 10) -> list[dict[str, Any]]:
+        """Clasificación derivada: no hay contadores duplicados ni puntos repetidos."""
+        limite = max(1, min(int(limite), 50))
+        def callback(cursor):
+            cursor.execute(
+                """select u.nombre, count(a.ciclo_id)::integer as puntos
+                   from safara.usuarios u
+                   left join safara.ensayos_asistencias a on a.usuario_id=u.id
+                   where u.activo
+                   group by u.id, u.nombre
+                   order by puntos desc, lower(u.nombre) asc limit %s""",
+                (limite,),
+            )
+            return list(cursor.fetchall())
+        return [dict(row) for row in self._run(callback)]
 
     def crear_actuacion(self, data: dict[str, Any], usuario: str) -> dict[str, Any]:
         def callback(cursor):

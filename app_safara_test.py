@@ -1065,7 +1065,10 @@ def registrar_voto_en_sheets_cloud(encuesta_id, usuario_id, respuesta):
 def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
   global ciclo_actual
   if str(encuesta_id) == "ensayo_proximo":
-    ensayo = informacion_ensayo()
+    ensayo = resolver_ensayo_actual()
+    if ensayo.get("pausado"):
+      st.warning("Esta semana está marcada como pausa de ensayo.")
+      return False
     if not ensayo["votacion_abierta"]:
       st.warning("La encuesta de ensayo ya está cerrada. El resultado queda guardado en el historial.")
       return False
@@ -1193,6 +1196,32 @@ def sincronizar_historial_ensayos():
     return historial
   except SupabaseStorageOperationError:
     return []
+
+
+def resolver_ensayo_actual():
+  """Devuelve el ensayo oficial: el calendario base solo actúa como respaldo."""
+  ensayo = informacion_ensayo()
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if not usar_almacenamiento_supabase(storage):
+    ensayo["pausado"] = False
+    ensayo["motivo_pausa"] = ""
+    return ensayo
+  try:
+    plan = storage.obtener_o_crear_plan_ensayo(
+        str(ensayo["ciclo_id"]), ensayo["lunes"], str(ensayo["ubicacion_nombre"])
+    )
+    ensayo["ubicacion_nombre"] = str(plan.get("ubicacion") or ensayo["ubicacion_nombre"])
+    ensayo["pausado"] = str(plan.get("estado") or "ACTIVO") == "PAUSADO"
+    ensayo["motivo_pausa"] = str(plan.get("motivo_pausa") or "")
+    if ensayo["pausado"]:
+      ensayo["votacion_abierta"] = False
+    return ensayo
+  except SupabaseStorageOperationError:
+    # Si la consulta temporal falla, se muestra la planificación calculada, pero
+    # no se permite guardar un voto hasta recuperar la base segura.
+    ensayo["pausado"] = False
+    ensayo["motivo_pausa"] = ""
+    return ensayo
 
 
 # --- PERSISTENCIA Y CARGA DE ACTUACIONES / BOLOS (CON GOOGLE SHEETS) ---
@@ -2179,8 +2208,8 @@ if seccion_activa == "Nuestras Movidas":
           unsafe_allow_html=True,
       )
 
-  ensayo_info = informacion_ensayo()
-  ensayo_info["url_maps"] = UBICACIONES_ENSAYO[ensayo_info["ubicacion_nombre"]]
+  ensayo_info = resolver_ensayo_actual()
+  ensayo_info["url_maps"] = UBICACIONES_ENSAYO.get(ensayo_info["ubicacion_nombre"], "")
   # El historial no altera la encuesta activa. Se consulta de forma explícita
   # para que el acceso diario no quede esperando operaciones históricas.
   historial_ensayos = []
@@ -2251,7 +2280,10 @@ if seccion_activa == "Nuestras Movidas":
       unsafe_allow_html=True,
   )
 
-  if ensayo_info["votacion_abierta"]:
+  if ensayo_info.get("pausado"):
+    motivo_pausa = ensayo_info.get("motivo_pausa") or "Pausa programada por Administración."
+    st.info(f"Esta semana no hay ensayo. {motivo_pausa}")
+  elif ensayo_info["votacion_abierta"]:
     voto_ens_actual = obtener_voto_usuario("ensayo_proximo", usuario_actual)
     img_si_cls = (
         "poll-img-green-sel"
@@ -2315,8 +2347,31 @@ if seccion_activa == "Nuestras Movidas":
           f"Historial técnico: {ensayos_confirmados} ensayos confirmados de "
           f"{len(historial_ensayos)} semanas cerradas."
       )
+      historial_visible = pd.DataFrame(historial_ensayos)
+      columnas_historial = [
+          columna for columna in (
+              "fecha", "ubicacion", "estado", "asistentes_confirmados",
+              "asistentes_reales", "motivo",
+          ) if columna in historial_visible.columns
+      ]
+      st.dataframe(historial_visible[columnas_historial], use_container_width=True)
     else:
       st.info("Aún no hay ensayos cerrados en el historial.")
+
+  if st.button("Ver puntos SAFARA", key="ver_puntos_ensayos"):
+    storage_puntos = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+    if not usar_almacenamiento_supabase(storage_puntos):
+      st.info("La clasificación estará disponible al recuperar la base segura.")
+    else:
+      try:
+        puntos = storage_puntos.obtener_puntuacion_ensayos()
+        puntos_usuario = next(
+            (int(item["puntos"]) for item in puntos if item["nombre"] == usuario_actual), 0
+        )
+        st.success(f"Llevas {puntos_usuario} punto(s) por asistencia confirmada.")
+        st.dataframe(pd.DataFrame(puntos), use_container_width=True, hide_index=True)
+      except SupabaseStorageOperationError:
+        st.info("La clasificación no está disponible temporalmente.")
 
   st.markdown("---")
 
@@ -2922,6 +2977,116 @@ if seccion_activa == "Administración":
   else:
     st.success("Acceso de Administración Autorizado")
 
+    st.markdown("#### Gestión del ensayo semanal")
+    ensayo_admin = resolver_ensayo_actual()
+    estado_ensayo_admin = "PAUSA PROGRAMADA" if ensayo_admin.get("pausado") else "ACTIVO"
+    st.caption(
+        f"{ensayo_admin['ciclo_id']} · {ensayo_admin['fecha'].strftime('%d/%m/%Y')} · "
+        f"{estado_ensayo_admin}. Cambiar la ubicación reajusta la alternancia "
+        "desde esta semana; una pausa no la altera."
+    )
+    with st.form("form_plan_ensayo_semanal"):
+      opciones_ubicacion = list(UBICACIONES_ENSAYO.keys())
+      indice_ubicacion = (
+          opciones_ubicacion.index(ensayo_admin["ubicacion_nombre"])
+          if ensayo_admin["ubicacion_nombre"] in opciones_ubicacion else 0
+      )
+      ubicacion_planificada = st.selectbox(
+          "Ubicación del ensayo", opciones_ubicacion, index=indice_ubicacion
+      )
+      pausa_planificada = st.checkbox(
+          "Esta semana no hay ensayo", value=bool(ensayo_admin.get("pausado"))
+      )
+      motivo_planificado = st.text_input(
+          "Motivo de la pausa (opcional)",
+          value=str(ensayo_admin.get("motivo_pausa") or ""),
+          disabled=not pausa_planificada,
+      )
+      guardar_plan = st.form_submit_button("GUARDAR PLAN DEL ENSAYO")
+      if guardar_plan:
+        storage_plan = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+        if not usar_almacenamiento_supabase(storage_plan):
+          st.error("No se puede cambiar el plan mientras la base segura no esté disponible.")
+        else:
+          try:
+            plan_guardado = storage_plan.actualizar_plan_ensayo(
+                str(ensayo_admin["ciclo_id"]),
+                ensayo_admin["lunes"],
+                ubicacion_planificada,
+                pausa_planificada,
+                motivo_planificado,
+                usuario_actual,
+            )
+            if plan_guardado:
+              st.session_state.pop("_historial_ensayos_cache", None)
+              registrar_auditoria("plan_ensayo_actualizado", usuario_actual)
+              st.success("Plan semanal actualizado. La siguiente semana continuará la alternancia correcta.")
+              st.rerun()
+            else:
+              st.warning("Ese ensayo ya está cerrado y solo queda disponible en el historial.")
+          except SupabaseStorageOperationError:
+            st.error("No se ha podido actualizar el plan del ensayo.")
+
+    if st.button("GESTIONAR ASISTENCIA Y PUNTOS", key="abrir_gestion_asistencia"):
+      st.session_state.gestion_asistencia_ensayos = True
+    if st.session_state.get("gestion_asistencia_ensayos"):
+      storage_asistencia = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+      if not usar_almacenamiento_supabase(storage_asistencia):
+        st.info("La gestión de asistencia estará disponible al recuperar la base segura.")
+      else:
+        try:
+          ensayos_cerrados = [
+              ensayo for ensayo in storage_asistencia.obtener_historial_ensayos()
+              if ensayo.get("estado") == "CONFIRMADO"
+          ]
+        except SupabaseStorageOperationError:
+          ensayos_cerrados = []
+        if not ensayos_cerrados:
+          st.info("Todavía no hay ensayos confirmados pendientes de validar asistencia.")
+        else:
+          opciones_cerradas = {
+              f"{item['fecha']} · {item['ubicacion']} · {item['ciclo_id']}": item["ciclo_id"]
+              for item in ensayos_cerrados
+          }
+          etiqueta_ensayo = st.selectbox(
+              "Ensayo cerrado", list(opciones_cerradas), key="ensayo_asistencia_elegido"
+          )
+          ciclo_asistencia = opciones_cerradas[etiqueta_ensayo]
+          try:
+            candidatos_asistencia = storage_asistencia.candidatos_asistencia_ensayo(
+                ciclo_asistencia
+            )
+          except SupabaseStorageOperationError:
+            candidatos_asistencia = []
+          nombres_asistencia = [item["nombre"] for item in candidatos_asistencia]
+          seleccion_inicial = [
+              item["nombre"] for item in candidatos_asistencia
+              if item.get("asistio") or item.get("confirmado")
+          ]
+          with st.form("form_confirmar_asistencia_ensayo"):
+            asistentes_reales = st.multiselect(
+                "Asistencia real (1 punto por persona)",
+                nombres_asistencia,
+                default=seleccion_inicial,
+            )
+            confirmar_asistencia = st.form_submit_button("CONFIRMAR ASISTENCIA Y SUMAR PUNTOS")
+            if confirmar_asistencia:
+              try:
+                total_asistencia = storage_asistencia.confirmar_asistencias_ensayo(
+                    ciclo_asistencia, asistentes_reales, usuario_actual
+                )
+                if total_asistencia >= 0:
+                  registrar_auditoria(
+                      "asistencia_ensayo_confirmada", usuario_actual, ciclo_asistencia
+                  )
+                  st.success(f"Asistencia confirmada: {total_asistencia} punto(s) actualizados.")
+                  st.rerun()
+                else:
+                  st.warning("Solo se puede confirmar asistencia de un ensayo confirmado.")
+              except SupabaseStorageOperationError:
+                st.error("No se ha podido confirmar la asistencia.")
+
+    st.markdown("---")
     # Estado breve y seguro: ayuda a comprobar el circuito completo sin
     # mostrar URLs privadas, tokens ni mensajes técnicos del proveedor.
     try:

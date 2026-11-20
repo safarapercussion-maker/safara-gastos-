@@ -797,13 +797,14 @@ class SupabaseSafaraStorage:
         def callback(cursor):
             referencia = self._siguiente_referencia_gasto(cursor, data["Fecha"])
             fichero = self._nombre_ticket(referencia, str(data["Fichero"]))
+            usuario_id = self._user_id(cursor, data["Usuario"])
             cursor.execute(
                 """insert into safara.gastos
                    (fecha, usuario_id, concepto, importe, fichero, referencia_anual, estado_reembolso,
                     enlace_ticket, drive_file_id, mime_type, estado_justificante)
                    values (%s,%s,%s,%s,%s,%s,%s,null,null,%s,'PENDIENTE_DRIVE') returning id""",
                 (
-                    self._as_date(data["Fecha"]), self._user_id(cursor, data["Usuario"]),
+                    self._as_date(data["Fecha"]), usuario_id,
                     data["Concepto"], data["Importe"], fichero, referencia,
                     data["Reembolsado"], data.get("MIME Type") or None,
                 ),
@@ -814,6 +815,14 @@ class SupabaseSafaraStorage:
                    (gasto_id, contenido, nombre_fichero, mime_type)
                    values (%s, %s, %s, %s)""",
                 (gasto_id, contenido, fichero, data.get("MIME Type") or None),
+            )
+            # El registro económico y su huella de auditoría se confirman en
+            # la misma transacción. Aunque el proceso se interrumpa después,
+            # nunca existirá un gasto fiscal sin trazabilidad.
+            cursor.execute(
+                """insert into safara.auditoria (evento, usuario_id, detalle)
+                   values ('gasto_registrado', %s, %s)""",
+                (usuario_id, f"Gasto {referencia} registrado"),
             )
             record = dict(data)
             record["ID"] = gasto_id
@@ -951,12 +960,20 @@ class SupabaseSafaraStorage:
 
     def marcar_gasto_abonado(self, gasto_id: int, usuario: str) -> bool:
         def callback(cursor):
+            usuario_id = self._user_id(cursor, usuario)
             cursor.execute(
                 """update safara.gastos set estado_reembolso='ABONADO', abonado_en=now(), abonado_por=%s
                    where id=%s and estado_reembolso='PENDIENTE ABONO'""",
-                (self._user_id(cursor, usuario), gasto_id),
+                (usuario_id, gasto_id),
             )
-            return cursor.rowcount == 1
+            actualizado = cursor.rowcount == 1
+            if actualizado:
+                cursor.execute(
+                    """insert into safara.auditoria (evento, usuario_id, detalle)
+                       values ('gasto_abonado', %s, %s)""",
+                    (usuario_id, f"Gasto {int(gasto_id)} marcado como abonado"),
+                )
+            return actualizado
         return bool(self._run(callback))
 
     def guardar_confesion(self, usuario: str, mensaje: str) -> None:
@@ -1107,9 +1124,25 @@ class SupabaseSafaraStorage:
     def obtener_archivo_financiero(self) -> dict[str, list[dict[str, Any]]]:
         """Devuelve solo la información necesaria para copias administrativas y fiscales."""
         reports = self.obtener_informes_google()
+        def callback(cursor):
+            cursor.execute(
+                """select a.fecha_hora as "Fecha", a.evento as "Evento",
+                          coalesce(u.nombre, '') as "Persona", a.detalle as "Detalle"
+                   from safara.auditoria a
+                   left join safara.usuarios u on u.id=a.usuario_id
+                   order by a.fecha_hora desc, a.id desc
+                   limit 1000"""
+            )
+            rows = list(cursor.fetchall())
+            for row in rows:
+                for key, value in list(row.items()):
+                    if isinstance(value, (dt.datetime, dt.date)):
+                        row[key] = value.isoformat()
+            return rows
         return {
             "gastos": reports["Informe Gastos"],
             "caja": reports["Informe Caja"],
             "actuaciones": reports["Informe Actuaciones"],
+            "auditoria": self._run(callback),
         }
 

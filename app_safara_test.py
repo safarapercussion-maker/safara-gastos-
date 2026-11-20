@@ -2850,9 +2850,6 @@ if seccion_activa == "Caja & Finanzas":
               aviso_justificante = "El gasto queda pendiente de revisión en el panel de administración."
             st.success("¡Gasto registrado con éxito!")
             st.session_state.pop("paquete_financiero", None)
-            registrar_auditoria(
-                "gasto_registrado", usuario_actual, str(nuevo_reg.get("ID", id_nuevo))
-            )
             # Supabase ya confirmó el gasto y, si procede, el ticket. Ahora se
             # actualiza Sheets como vista de consulta; un fallo externo nunca
             # revierte el gasto ni interrumpe a la persona que lo registró.
@@ -3554,7 +3551,6 @@ if seccion_activa == "Administración":
               gasto_guardado = guardar_gastos_persistentes()
             if gasto_guardado:
               st.session_state.pop("paquete_financiero", None)
-              registrar_auditoria("gasto_abonado", usuario_actual, str(prow["ID"]))
               actualizar_informes_y_copias_en_segundo_plano()
               st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
               st.rerun()

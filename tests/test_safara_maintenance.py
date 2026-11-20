@@ -33,7 +33,7 @@ class FakeDatabase:
         }
 
     def obtener_archivo_financiero(self):
-        return {"gastos": [], "caja": [], "actuaciones": []}
+        return {"gastos": [], "caja": [], "actuaciones": [], "auditoria": []}
 
     def terminar_mantenimiento_google(self, revision, backup):
         self.finished.append((revision, backup))
@@ -72,6 +72,7 @@ class MaintenanceTests(unittest.TestCase):
             "gastos": [{"ID": 1, "Importe": 24.5}],
             "caja": [{"Concepto": "Saldo de caja", "Importe": 10}],
             "actuaciones": [],
+            "auditoria": [{"Evento": "gasto_registrado", "Detalle": "Gasto 2026001 registrado"}],
         })
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             self.assertEqual(
@@ -80,6 +81,7 @@ class MaintenanceTests(unittest.TestCase):
                     "gastos.csv",
                     "caja.csv",
                     "actuaciones.csv",
+                    "auditoria.csv",
                     "SAFARA_Archivo_Financiero.xlsx",
                     "MANIFIESTO.json",
                 },
@@ -88,6 +90,7 @@ class MaintenanceTests(unittest.TestCase):
             gastos_csv = archive.read("gastos.csv")
             self.assertGreater(len(archive.read("SAFARA_Archivo_Financiero.xlsx")), 0)
         self.assertEqual(manifest["contenido"]["gastos"], 1)
+        self.assertEqual(manifest["contenido"]["auditoria"], 1)
         self.assertIn("gastos.csv", manifest["sha256_archivos"])
         self.assertEqual(
             manifest["sha256_archivos"]["gastos.csv"],

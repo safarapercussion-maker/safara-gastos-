@@ -43,7 +43,7 @@ def crear_paquete_financiero_descargable(
             {
                 "Generado": date.today().isoformat(),
                 "Origen": "Base segura SAFARA",
-                "Alcance": "Gastos, caja y actuaciones",
+                "Alcance": "Gastos, caja, actuaciones y auditoría",
                 "Justificantes": "Enlaces incluidos en la hoja gastos; originales protegidos en Google Drive.",
             }
         ]).to_excel(writer, sheet_name="Resumen", index=False)

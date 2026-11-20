@@ -1,12 +1,10 @@
 import base64
 import datetime
 import html
-import io
 import os
 import random
 import re
 import uuid
-import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -56,7 +54,7 @@ from safara_supabase_storage import (
     SupabaseStorageOperationError,
     is_enabled as supabase_storage_enabled,
 )
-from safara_maintenance import run_google_maintenance
+from safara_maintenance import crear_paquete_financiero_descargable, run_google_maintenance
 from safara_ensayos import (
     QUORUM_ENSAYO_MINIMO,
     ciclos_que_deben_cerrarse,
@@ -631,9 +629,23 @@ def obtener_ejecutor_mantenimiento_google():
   return ThreadPoolExecutor(max_workers=1, thread_name_prefix="safara-google")
 
 
-def ejecutar_mantenimiento_google(database, google):
-  """Ejecuta una réplica de Google sin depender del contexto de Streamlit."""
+def ejecutar_mantenimiento_google_configurado(database, google_config, oauth_config):
+  """Prepara Google fuera del recorrido de la persona usuaria."""
   try:
+    credenciales_drive = None
+    carpeta_id = None
+    if oauth_config is not None:
+      autorizacion = database.obtener_autorizacion_google_drive()
+      token_cifrado = str(autorizacion.get("token_cifrado") or "")
+      carpeta_id = str(autorizacion.get("carpeta_id") or "")
+      if not token_cifrado or not carpeta_id:
+        return False
+      credenciales_drive = credentials_from_encrypted_token(oauth_config, token_cifrado)
+    google = GoogleSafaraStorage(
+        google_config,
+        drive_credentials=credenciales_drive,
+        receipts_folder_id=carpeta_id,
+    )
     return run_google_maintenance(database, google)
   except Exception:
     return False
@@ -652,11 +664,15 @@ def actualizar_informes_y_copias_en_segundo_plano():
     database = obtener_almacenamiento_google()
     if not usar_almacenamiento_supabase(database):
       return False
-    google = obtener_almacenamiento_drive()
-    if google is None:
+    if not google_storage_enabled(st.secrets):
       return False
+    google_config = GoogleStorageConfig.from_secrets(st.secrets)
+    try:
+      oauth_config = GoogleDriveOAuthConfig.from_secrets(st.secrets)
+    except GoogleDriveOAuthConfigurationError:
+      oauth_config = None
     _google_maintenance_future = obtener_ejecutor_mantenimiento_google().submit(
-        ejecutar_mantenimiento_google, database, google
+        ejecutar_mantenimiento_google_configurado, database, google_config, oauth_config
     )
     return True
   except Exception:
@@ -725,6 +741,7 @@ def reiniciar_estado_si_cambia_backend():
       "saldo_caja",
       "usuarios_registrados",
       "invitaciones",
+      "invitaciones_cargadas",
       "usuario_autenticado",
       "ultimo_acceso",
       "fallos_acceso",
@@ -783,7 +800,7 @@ def guardar_texto_atomico(texto, destino):
     return False
 
 
-def registrar_auditoria(evento, usuario="", detalle=""):
+def _registrar_auditoria_directa(evento, usuario="", detalle=""):
   """Registra solo eventos técnicos; nunca secretos, contraseñas ni códigos."""
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if storage:
@@ -809,7 +826,14 @@ def obtener_ejecutor_auditoria():
 
 def registrar_auditoria_en_segundo_plano(evento, usuario="", detalle=""):
   """Agenda auditoría no crítica para la respuesta visual, sin perder seguridad."""
-  obtener_ejecutor_auditoria().submit(registrar_auditoria, evento, usuario, detalle)
+  obtener_ejecutor_auditoria().submit(
+      _registrar_auditoria_directa, evento, usuario, detalle
+  )
+
+
+def registrar_auditoria(evento, usuario="", detalle=""):
+  """Compatibilidad: ningún clic de la aplicación espera a la auditoría."""
+  registrar_auditoria_en_segundo_plano(evento, usuario, detalle)
 
 # --- INICIALIZACIÓN DE VOTOS ---
 # Los datos de trabajo no son necesarios para identificar a una persona. Cargarlos
@@ -1522,12 +1546,13 @@ def cargar_usuarios_seguro():
     if not USER_REQUIRED_COLUMNS.issubset(df_u.columns):
       return {}
     usuarios = {}
+    claves_usuarios = set()
     for record in df_u.to_dict(orient="records"):
       nombre = normalize_display_name(record.get("Nombre"))
+      clave_nombre = normalized_name_key(nombre)
       if (
           not nombre
-          or normalized_name_key(nombre)
-          in {normalized_name_key(item) for item in usuarios}
+          or clave_nombre in claves_usuarios
           or str(record.get("rol")) not in {"admin", "usuario"}
           or not str(record.get("password_salt") or "")
           or not str(record.get("password_hash") or "")
@@ -1543,6 +1568,7 @@ def cargar_usuarios_seguro():
           "instrumento": str(record["instrumento"]),
           "rgpd": bool(record["rgpd"]),
         }
+      claves_usuarios.add(clave_nombre)
     return usuarios
   except Exception:
     return {}
@@ -1628,6 +1654,14 @@ def cargar_invitaciones_seguras():
     return []
 
 
+def asegurar_invitaciones_cargadas():
+  """Las invitaciones no retrasan el acceso; solo se leen al necesitarlas."""
+  if st.session_state.get("invitaciones_cargadas"):
+    return
+  st.session_state.invitaciones = cargar_invitaciones_seguras()
+  st.session_state.invitaciones_cargadas = True
+
+
 def guardar_invitaciones_excel():
   try:
     df = pd.DataFrame(st.session_state.invitaciones, columns=INVITATION_COLUMNS)
@@ -1646,6 +1680,7 @@ def guardar_invitaciones_excel():
 
 
 def crear_invitacion(usuario_admin, dias_validez):
+  asegurar_invitaciones_cargadas()
   codigo = generate_invitation_code()
   ahora = datetime.datetime.now(datetime.timezone.utc)
   registro = {
@@ -1672,6 +1707,7 @@ def crear_invitacion(usuario_admin, dias_validez):
 
 
 def invitacion_valida(codigo):
+  asegurar_invitaciones_cargadas()
   ahora = datetime.datetime.now(datetime.timezone.utc)
   for registro in st.session_state.invitaciones:
     if registro.get("usado_por"):
@@ -1719,7 +1755,10 @@ if "usuarios_registrados" not in st.session_state:
   st.session_state.usuarios_registrados = cargar_usuarios_seguro()
 
 if "invitaciones" not in st.session_state:
-  st.session_state.invitaciones = cargar_invitaciones_seguras()
+  st.session_state.invitaciones = []
+
+if "invitaciones_cargadas" not in st.session_state:
+  st.session_state.invitaciones_cargadas = False
 
 if "usuario_autenticado" not in st.session_state:
   st.session_state.usuario_autenticado = None
@@ -2019,14 +2058,9 @@ if not st.session_state.usuario_autenticado:
 # ==============================================================================
 usuario_actual = st.session_state.usuario_autenticado
 
-# Una vez por sesión y también una vez por cada despliegue, cualquier acceso
-# válido comprueba si hay una vista de Google pendiente. No se limita a
-# Administración: así un gasto confirmado antes de una actualización se
-# recupera sin exigir cerrar sesión ni pulsar un botón concreto.
-version_mantenimiento_google = version_backend_supabase()
-if st.session_state.get("mantenimiento_google_comprobado") != version_mantenimiento_google:
-  st.session_state.mantenimiento_google_comprobado = version_mantenimiento_google
-  actualizar_informes_y_copias_en_segundo_plano()
+# La sincronización de Google se programa al cambiar datos o a petición de
+# Administración. Nunca se ejecuta al entrar: el acceso solo valida la cuenta
+# y muestra la pantalla de trabajo sin depender de servicios externos.
 
 hoy_act = datetime.datetime.now(ZoneInfo("Europe/Madrid")).date()
 
@@ -2802,6 +2836,7 @@ if seccion_activa == "Caja & Finanzas":
             else:
               aviso_justificante = "El gasto queda pendiente de revisión en el panel de administración."
             st.success("¡Gasto registrado con éxito!")
+            st.session_state.pop("paquete_financiero", None)
             registrar_auditoria(
                 "gasto_registrado", usuario_actual, str(nuevo_reg.get("ID", id_nuevo))
             )
@@ -2886,10 +2921,6 @@ if seccion_activa == "Administración":
     st.info("Esta sección está disponible solo para personas administradoras.")
   else:
     st.success("Acceso de Administración Autorizado")
-    # Al abrir Administración se recupera también cualquier actualización que
-    # hubiera quedado pendiente (por ejemplo, un gasto registrado justo antes
-    # de publicar esta mejora), sin exigir otro registro de prueba.
-    actualizar_informes_y_copias_en_segundo_plano()
 
     # Estado breve y seguro: ayuda a comprobar el circuito completo sin
     # mostrar URLs privadas, tokens ni mensajes técnicos del proveedor.
@@ -3270,6 +3301,7 @@ if seccion_activa == "Administración":
         saldo_anterior = st.session_state.saldo_caja
         st.session_state.saldo_caja = float(nuevo_saldo_input)
         if guardar_saldo_persistente(usuario_actual):
+          st.session_state.pop("paquete_financiero", None)
           registrar_auditoria("saldo_actualizado", usuario_actual)
           st.success("¡Importe actualizado con éxito!")
           st.rerun()
@@ -3395,6 +3427,7 @@ if seccion_activa == "Administración":
             else:
               gasto_guardado = guardar_gastos_persistentes()
             if gasto_guardado:
+              st.session_state.pop("paquete_financiero", None)
               registrar_auditoria("gasto_abonado", usuario_actual, str(prow["ID"]))
               actualizar_informes_y_copias_en_segundo_plano()
               st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
@@ -3407,46 +3440,48 @@ if seccion_activa == "Administración":
 
     st.divider()
 
-    with st.expander(
-        "Generar Paquete de Auditoría (ZIP + Excel)", expanded=False
-    ):
-      if st.button("Generar Paquete ZIP"):
-        if st.session_state.gastos.empty:
-          st.warning("No hay datos para exportar.")
-        else:
-          zip_buffer = io.BytesIO()
-          with zipfile.ZipFile(
-              zip_buffer, "w", zipfile.ZIP_DEFLATED
-          ) as zip_file:
-            excel_buffer = io.BytesIO()
-            st.session_state.gastos.to_excel(excel_buffer, index=False)
-            zip_file.writestr(
-                "Libro_Registro_Safara_Percussion.xlsx",
-                excel_buffer.getvalue(),
+    st.markdown("#### Archivo financiero descargable")
+    st.caption(
+        "Genera una copia actual de gastos, caja y actuaciones. Cada gasto conserva "
+        "su enlace al justificante original protegido en Google Drive."
+    )
+    if st.button("PREPARAR ARCHIVO FINANCIERO", key="preparar_archivo_financiero"):
+      almacenamiento_exportacion, error_exportacion = diagnostico_supabase_para_administracion()
+      if not almacenamiento_exportacion:
+        st.error(error_exportacion or "No se puede preparar el archivo ahora mismo.")
+      else:
+        try:
+          with st.spinner("Preparando la versión actualizada..."):
+            paquete = crear_paquete_financiero_descargable(
+                almacenamiento_exportacion.obtener_archivo_financiero()
             )
+          st.session_state.paquete_financiero = {
+              "contenido": paquete,
+              "nombre": (
+                  f"SAFARA_Archivo_Financiero_{datetime.date.today().isoformat()}.zip"
+              ),
+              "generado_en": datetime.datetime.now(
+                  ZoneInfo("Europe/Madrid")
+              ).strftime("%d/%m/%Y %H:%M"),
+          }
+          registrar_auditoria("archivo_financiero_preparado", usuario_actual)
+          st.success("Archivo preparado con datos actuales.")
+        except SupabaseStorageOperationError:
+          st.error("No se ha podido leer la base segura para preparar el archivo.")
 
-            for _, row in st.session_state.gastos.iterrows():
-              fich = row.get("Fichero")
-              if fich and isinstance(fich, str) and str(fich) != "nan":
-                path_fich = os.path.join(RECEIPTS_DIR, fich)
-                if os.path.exists(path_fich):
-                  clean_concept = re.sub(r"[^a-zA-Z0-9]", "_", row["Concepto"])[
-                      :30
-                  ]
-                  ext = fich.split(".")[-1]
-                  zip_name = (
-                      f"Justificantes/ID_{row['ID']}_{row['Fecha']}_{clean_concept}_{row['Importe']}EUR.{ext}"
-                  )
-                  zip_file.write(path_fich, zip_name)
-
-          zip_buffer.seek(0)
-          st.success("Paquete generado con éxito")
-          st.download_button(
-              label="Descargar ZIP Certificado",
-              data=zip_buffer.getvalue(),
-              file_name=f"Auditoria_Safara_Percussion_{datetime.date.today()}.zip",
-              mime="application/zip",
-          )
+    paquete_financiero = st.session_state.get("paquete_financiero")
+    if paquete_financiero:
+      st.caption(
+          f"Versión preparada el {paquete_financiero['generado_en']}. "
+          "Vuelve a prepararla antes de descargar si ha habido cambios."
+      )
+      st.download_button(
+          label="DESCARGAR ARCHIVO FINANCIERO",
+          data=paquete_financiero["contenido"],
+          file_name=paquete_financiero["nombre"],
+          mime="application/zip",
+          key="descargar_archivo_financiero",
+      )
 
 st.divider()
 

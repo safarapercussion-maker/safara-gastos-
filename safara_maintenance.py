@@ -10,6 +10,8 @@ import zipfile
 from datetime import date
 from typing import Any
 
+import pandas as pd
+
 from safara_google_storage import GoogleSafaraStorage, StorageOperationError
 from safara_supabase_storage import SupabaseSafaraStorage, SupabaseStorageOperationError
 
@@ -24,14 +26,39 @@ def _csv_bytes(records: list[dict[str, Any]]) -> bytes:
     return output.getvalue().encode("utf-8")
 
 
-def _create_financial_archive(snapshot: dict[str, list[dict[str, Any]]]) -> bytes:
+def crear_paquete_financiero_descargable(
+    snapshot: dict[str, list[dict[str, Any]]],
+) -> bytes:
+    """Crea una descarga fiscal desde datos actuales, sin exponer credenciales.
+
+    Los justificantes permanecen en Drive, donde conservan su control de acceso;
+    el libro incluye sus enlaces para localizar cada documento de inmediato.
+    """
     files: dict[str, bytes] = {
         f"{name}.csv": _csv_bytes(records) for name, records in snapshot.items()
     }
+    workbook = io.BytesIO()
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame([
+            {
+                "Generado": date.today().isoformat(),
+                "Origen": "Base segura SAFARA",
+                "Alcance": "Gastos, caja y actuaciones",
+                "Justificantes": "Enlaces incluidos en la hoja gastos; originales protegidos en Google Drive.",
+            }
+        ]).to_excel(writer, sheet_name="Resumen", index=False)
+        for name, records in snapshot.items():
+            pd.DataFrame(records).to_excel(
+                writer, sheet_name=name.capitalize()[:31], index=False
+            )
+    files["SAFARA_Archivo_Financiero.xlsx"] = workbook.getvalue()
     manifest = {
         "fecha": date.today().isoformat(),
         "contenido": {name: len(records) for name, records in snapshot.items()},
-        "nota": "Copia administrativa; los tickets originales permanecen en Google Drive.",
+        "nota": (
+            "Copia administrativa generada desde Supabase; los tickets originales "
+            "permanecen protegidos en Google Drive y se localizan con sus enlaces."
+        ),
         "sha256_archivos": {
             name: hashlib.sha256(payload).hexdigest()
             for name, payload in files.items()
@@ -43,6 +70,11 @@ def _create_financial_archive(snapshot: dict[str, list[dict[str, Any]]]) -> byte
             package.writestr(name, payload)
         package.writestr("MANIFIESTO.json", json.dumps(manifest, ensure_ascii=False, indent=2))
     return archive.getvalue()
+
+
+# Nombre privado conservado para que las copias automáticas existentes sigan
+# llamando al mismo generador validado.
+_create_financial_archive = crear_paquete_financiero_descargable
 
 
 def run_google_maintenance(

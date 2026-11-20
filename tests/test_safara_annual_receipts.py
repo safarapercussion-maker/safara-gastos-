@@ -1,8 +1,11 @@
 """Regresiones del archivo anual de justificantes."""
 
 from pathlib import Path
+import io
+import zipfile
 import unittest
 
+from safara_maintenance import crear_paquete_financiero_descargable
 from safara_supabase_storage import SupabaseSafaraStorage
 
 
@@ -60,6 +63,17 @@ class AnnualReceiptTests(unittest.TestCase):
         self.assertIn("def _carpeta_anual", GOOGLE_SOURCE)
         self.assertIn('"addParents": carpeta_anual', GOOGLE_SOURCE)
         self.assertIn("f\"{referencia}_ticket{extension}\"", (ROOT / "safara_supabase_storage.py").read_text(encoding="utf-8"))
+
+    def test_financial_download_contains_current_records_and_a_workbook(self):
+        package = crear_paquete_financiero_descargable({
+            "gastos": [{"Referencia": "2026-004", "Importe": 12.5, "Ticket": "https://drive.google.com/file/d/example"}],
+            "caja": [{"Concepto": "Saldo de caja", "Importe": 20}],
+            "actuaciones": [],
+        })
+        with zipfile.ZipFile(io.BytesIO(package)) as archive:
+            self.assertIn("SAFARA_Archivo_Financiero.xlsx", archive.namelist())
+            self.assertIn("gastos.csv", archive.namelist())
+            self.assertIn("2026-004", archive.read("gastos.csv").decode("utf-8"))
 
 
 if __name__ == "__main__":

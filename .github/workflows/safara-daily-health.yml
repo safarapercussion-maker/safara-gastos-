@@ -2,7 +2,10 @@ name: Comprobación diaria SAFARA pruebas
 
 on:
   schedule:
-    - cron: "17 5 * * *"
+    # Cada seis horas: evita periodos de inactividad largos sin generar tráfico
+    # continuo. GitHub puede retrasar un disparo, por eso no se usa un intervalo
+    # de doce horas exacto.
+    - cron: "17 2,8,14,20 * * *"
   workflow_dispatch:
 
 permissions:
@@ -16,5 +19,6 @@ jobs:
       - name: Abrir aplicación de pruebas
         run: >-
           curl --fail --silent --show-error --location
-          --retry 3 --retry-delay 10 --retry-connrefused
+          --retry 3 --retry-delay 10 --retry-all-errors
+          --connect-timeout 20 --max-time 120
           https://safara-test-seguridad.streamlit.app/

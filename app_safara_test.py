@@ -815,7 +815,7 @@ def registrar_auditoria(evento, usuario="", detalle=""):
   registrar_auditoria_en_segundo_plano(evento, usuario, detalle)
 
 
-@st.cache_data(ttl=8, show_spinner=False, max_entries=1)
+@st.cache_data(ttl=15, show_spinner=False, max_entries=1)
 def cargar_votos_remotos(_storage):
   """Comparte durante unos segundos la lectura de encuestas entre sesiones.
 
@@ -1177,10 +1177,13 @@ def obtener_todos_votos_encuesta(encuesta_id):
   ]
 
 
-@st.fragment(run_every="8s")
+@st.fragment(run_every="15s")
 def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
   """Panel ligero: actualiza resultados sin reiniciar toda la aplicación."""
   recargar_votos_sin_bloquear()
+  mensaje_guardado = st.session_state.pop(f"_{clave}_guardado", "")
+  if mensaje_guardado:
+    st.success(mensaje_guardado)
   respuesta_actual = obtener_voto_usuario(encuesta_id, usuario_id)
   voto_si, voto_no = st.columns(2)
   with voto_si:
@@ -1191,7 +1194,8 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
         use_container_width=True,
     ):
       if registrar_voto_backend(encuesta_id, usuario_id, "SI"):
-        st.success("Respuesta guardada.")
+        st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
+        st.rerun(scope="fragment")
   with voto_no:
     if st.button(
         "No puedo, tengo lío",
@@ -1200,7 +1204,8 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
         use_container_width=True,
     ):
       if registrar_voto_backend(encuesta_id, usuario_id, "NO"):
-        st.success("Respuesta guardada.")
+        st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
+        st.rerun(scope="fragment")
 
   df_votos = obtener_todos_votos_encuesta(encuesta_id)
   confirmados = (
@@ -1260,7 +1265,7 @@ def resolver_ensayo_actual():
     if (
         cache
         and cache.get("ciclo_id") == str(ensayo["ciclo_id"])
-        and ahora - cache.get("consultado_en", ahora) < datetime.timedelta(seconds=12)
+        and ahora - cache.get("consultado_en", ahora) < datetime.timedelta(seconds=60)
     ):
       plan = cache["plan"]
     else:
@@ -1600,6 +1605,35 @@ def guardar_saldo_persistente(usuario):
     return False
   return guardar_texto_atomico(st.session_state.saldo_caja, SALDO_FILE)
 
+
+@st.fragment
+def render_ajuste_saldo_rapido(usuario):
+  """Actualiza el saldo sin reconstruir el resto de Administración."""
+  mensaje_guardado = st.session_state.pop("_saldo_guardado", "")
+  if mensaje_guardado:
+    st.success(mensaje_guardado)
+  with st.form("form_ajuste_saldo"):
+    nuevo_saldo_input = st.number_input(
+        "Nuevo Saldo Total en Caja (€)",
+        min_value=0.0,
+        value=float(st.session_state.saldo_caja),
+        step=10.0,
+        format="%.2f",
+    )
+    btn_actualizar_saldo = st.form_submit_button("ACTUALIZAR SALDO")
+    if btn_actualizar_saldo:
+      saldo_anterior = st.session_state.saldo_caja
+      st.session_state.saldo_caja = float(nuevo_saldo_input)
+      if guardar_saldo_persistente(usuario):
+        st.session_state.pop("paquete_financiero", None)
+        registrar_auditoria("saldo_actualizado", usuario)
+        st.session_state["_saldo_guardado"] = "¡Importe actualizado con éxito!"
+        st.rerun(scope="fragment")
+      else:
+        st.session_state.saldo_caja = saldo_anterior
+        st.error("No se ha podido guardar el saldo.")
+
+
 USER_REQUIRED_COLUMNS = {
     "Nombre",
     "rol",
@@ -1613,7 +1647,7 @@ USER_REQUIRED_COLUMNS = {
 }
 
 
-@st.cache_data(ttl=30, show_spinner=False, max_entries=1)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=1)
 def cargar_usuarios_seguro():
   """Carga el registro de acceso y lo reutiliza brevemente entre sesiones."""
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
@@ -2689,10 +2723,6 @@ if seccion_activa == "Agenda & Bolos":
                 """,
               unsafe_allow_html=True,
           )
-          if st.button("A tope, se le da", key=f"btn_v_si_{bolo_id}"):
-            if registrar_voto_backend(encuesta_key, usuario_actual, "SI"):
-              st.rerun()
-
         with b_col_no:
           st.markdown(
               f"""
@@ -2702,9 +2732,9 @@ if seccion_activa == "Agenda & Bolos":
                 """,
               unsafe_allow_html=True,
           )
-          if st.button("No puedo, tengo lío", key=f"btn_v_no_{bolo_id}"):
-            if registrar_voto_backend(encuesta_key, usuario_actual, "NO"):
-              st.rerun()
+        render_control_encuesta_en_vivo(
+            encuesta_key, usuario_actual, f"encuesta_bolo_{bolo_id}"
+        )
 
       if not es_anulada:
         st.markdown(
@@ -3472,26 +3502,7 @@ if seccion_activa == "Administración":
 
     # --- GESTIÓN DE SALDO DE CAJA & FINANZAS ---
     st.markdown("#### Ajustar Saldo de Caja & Finanzas")
-    with st.form("form_ajuste_saldo"):
-      nuevo_saldo_input = st.number_input(
-          "Nuevo Saldo Total en Caja (€)",
-          min_value=0.0,
-          value=float(st.session_state.saldo_caja),
-          step=10.0,
-          format="%.2f",
-      )
-      btn_actualizar_saldo = st.form_submit_button("ACTUALIZAR SALDO")
-      if btn_actualizar_saldo:
-        saldo_anterior = st.session_state.saldo_caja
-        st.session_state.saldo_caja = float(nuevo_saldo_input)
-        if guardar_saldo_persistente(usuario_actual):
-          st.session_state.pop("paquete_financiero", None)
-          registrar_auditoria("saldo_actualizado", usuario_actual)
-          st.success("¡Importe actualizado con éxito!")
-          st.rerun()
-        else:
-          st.session_state.saldo_caja = saldo_anterior
-          st.error("No se ha podido guardar el saldo.")
+    render_ajuste_saldo_rapido(usuario_actual)
 
     st.markdown("---")
 

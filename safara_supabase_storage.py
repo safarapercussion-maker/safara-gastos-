@@ -485,11 +485,16 @@ class SupabaseSafaraStorage:
         def callback(cursor):
             cursor.execute(
                 """insert into safara.votos (encuesta_id, ciclo_id, usuario_id, respuesta)
-                   values (%s, %s, %s, %s)
+                   select %s, %s, id, %s
+                   from safara.usuarios
+                   where lower(btrim(nombre)) = lower(btrim(%s)) and activo
                    on conflict (encuesta_id, ciclo_id, usuario_id)
-                   do update set respuesta=excluded.respuesta, actualizado_en=now()""",
-                (encuesta_id, ciclo_id, self._user_id(cursor, usuario), respuesta),
+                   do update set respuesta=excluded.respuesta, actualizado_en=now()
+                   returning id""",
+                (encuesta_id, ciclo_id, respuesta, usuario),
             )
+            if not cursor.fetchone():
+                raise SupabaseStorageOperationError("La persona usuaria ya no está activa.")
         self._run(callback)
 
     def obtener_o_crear_plan_ensayo(

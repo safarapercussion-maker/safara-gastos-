@@ -814,6 +814,37 @@ def registrar_auditoria(evento, usuario="", detalle=""):
   """Compatibilidad: ningún clic de la aplicación espera a la auditoría."""
   registrar_auditoria_en_segundo_plano(evento, usuario, detalle)
 
+
+@st.cache_data(ttl=8, show_spinner=False, max_entries=1)
+def cargar_votos_remotos(_storage):
+  """Comparte durante unos segundos la lectura de encuestas entre sesiones.
+
+  Cada voto sigue confirmándose directamente en Supabase. Esta caché solo evita
+  que cada clic y cada persona repitan la misma lectura completa de resultados.
+  """
+  return _storage.read_records("Votos")
+
+
+def recargar_votos_sin_bloquear():
+  """Actualiza la copia visual de votos sin consultar Google ni bloquear la UI."""
+  storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if not storage:
+    return False
+  try:
+    st.session_state.votos_historial = pd.DataFrame(
+        cargar_votos_remotos(storage),
+        columns=["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"],
+    )
+    return True
+  except (StorageOperationError, SupabaseStorageOperationError):
+    return False
+
+
+def invalidar_votos_compartidos():
+  """Hace visibles inmediatamente los votos recién confirmados."""
+  cargar_votos_remotos.clear()
+
+
 # --- INICIALIZACIÓN DE VOTOS ---
 # Los datos de trabajo no son necesarios para identificar a una persona. Cargarlos
 # antes del acceso multiplicaba consultas y mostraba fallos de infraestructura en
@@ -827,7 +858,7 @@ if (
   if storage:
     try:
       st.session_state.votos_historial = pd.DataFrame(
-          storage.read_records("Votos"),
+          cargar_votos_remotos(storage),
           columns=["encuesta_id", "ciclo_id", "usuario_id", "respuesta", "actualizado_en"],
       )
     except (StorageOperationError, SupabaseStorageOperationError):
@@ -1067,6 +1098,7 @@ def registrar_voto_backend(encuesta_id, usuario_id, respuesta):
   if usar_almacenamiento_supabase(storage):
     try:
       storage.guardar_voto(str(encuesta_id), str(ciclo_target), str(usuario_id), str(respuesta))
+      invalidar_votos_compartidos()
     except SupabaseStorageOperationError:
       st.error("No se ha podido guardar tu respuesta. Inténtalo de nuevo.")
       return False
@@ -1145,6 +1177,43 @@ def obtener_todos_votos_encuesta(encuesta_id):
   ]
 
 
+@st.fragment(run_every="8s")
+def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
+  """Panel ligero: actualiza resultados sin reiniciar toda la aplicación."""
+  recargar_votos_sin_bloquear()
+  respuesta_actual = obtener_voto_usuario(encuesta_id, usuario_id)
+  voto_si, voto_no = st.columns(2)
+  with voto_si:
+    if st.button(
+        "A tope, se le da",
+        key=f"{clave}_si",
+        type="primary" if respuesta_actual == "SI" else "secondary",
+        use_container_width=True,
+    ):
+      if registrar_voto_backend(encuesta_id, usuario_id, "SI"):
+        st.success("Respuesta guardada.")
+  with voto_no:
+    if st.button(
+        "No puedo, tengo lío",
+        key=f"{clave}_no",
+        type="primary" if respuesta_actual == "NO" else "secondary",
+        use_container_width=True,
+    ):
+      if registrar_voto_backend(encuesta_id, usuario_id, "NO"):
+        st.success("Respuesta guardada.")
+
+  df_votos = obtener_todos_votos_encuesta(encuesta_id)
+  confirmados = (
+      len(df_votos[df_votos["respuesta"] == "SI"])
+      if not df_votos.empty
+      else 0
+  )
+  if encuesta_id == "cena_proxima":
+    st.caption(f"🟢 {confirmados} Safarers confirmados para cena")
+  else:
+    st.caption(f"🟢 {confirmados} Safarers confirmados para el ensayo")
+
+
 def sincronizar_historial_ensayos():
   """Cierra por reloj los ensayos vencidos y devuelve el historial disponible."""
   ahora = datetime.datetime.now(ZoneInfo("Europe/Madrid"))
@@ -1186,9 +1255,23 @@ def resolver_ensayo_actual():
     ensayo["motivo_pausa"] = ""
     return ensayo
   try:
-    plan = storage.obtener_o_crear_plan_ensayo(
-        str(ensayo["ciclo_id"]), ensayo["lunes"], str(ensayo["ubicacion_nombre"])
-    )
+    cache = st.session_state.get("_plan_ensayo_actual_cache")
+    ahora = datetime.datetime.now(ZoneInfo("Europe/Madrid"))
+    if (
+        cache
+        and cache.get("ciclo_id") == str(ensayo["ciclo_id"])
+        and ahora - cache.get("consultado_en", ahora) < datetime.timedelta(seconds=12)
+    ):
+      plan = cache["plan"]
+    else:
+      plan = storage.obtener_o_crear_plan_ensayo(
+          str(ensayo["ciclo_id"]), ensayo["lunes"], str(ensayo["ubicacion_nombre"])
+      )
+      st.session_state["_plan_ensayo_actual_cache"] = {
+          "ciclo_id": str(ensayo["ciclo_id"]),
+          "consultado_en": ahora,
+          "plan": plan,
+      }
     ensayo["ubicacion_nombre"] = str(plan.get("ubicacion") or ensayo["ubicacion_nombre"])
     ensayo["pausado"] = str(plan.get("estado") or "ACTIVO") == "PAUSADO"
     ensayo["motivo_pausa"] = str(plan.get("motivo_pausa") or "")
@@ -1530,8 +1613,9 @@ USER_REQUIRED_COLUMNS = {
 }
 
 
+@st.cache_data(ttl=30, show_spinner=False, max_entries=1)
 def cargar_usuarios_seguro():
-  """Carga solo el registro v2 con contraseñas hasheadas y roles explícitos."""
+  """Carga el registro de acceso y lo reutiliza brevemente entre sesiones."""
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
   if usar_almacenamiento_google() and not storage:
     return {}
@@ -1580,6 +1664,11 @@ def cargar_usuarios_seguro():
     return usuarios
   except Exception:
     return {}
+
+
+def invalidar_usuarios_compartidos():
+  """Evita que un alta, baja o cambio de rol quede esperando a la caché."""
+  cargar_usuarios_seguro.clear()
 
 
 def guardar_usuarios_excel():
@@ -2040,6 +2129,7 @@ if not st.session_state.usuario_autenticado:
               st.error("El código de invitación no es válido, ya se ha usado o ha caducado.")
             else:
               st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
+              invalidar_usuarios_compartidos()
               registrar_auditoria("alta_usuario", nombre_limpio, nuevo_usuario["rol"])
               actualizar_informes_y_copias_en_segundo_plano()
               st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
@@ -2289,24 +2379,11 @@ if seccion_activa == "Nuestras Movidas":
         unsafe_allow_html=True,
     )
 
-    voto_ens_si, voto_ens_no = st.columns(2)
-    with voto_ens_si:
-      if st.button("A tope, se le da", key="btn_ens_si"):
-        if registrar_voto_backend("ensayo_proximo", usuario_actual, "SI"):
-          st.rerun()
-    with voto_ens_no:
-      if st.button("No puedo, tengo lío", key="btn_ens_no"):
-        if registrar_voto_backend("ensayo_proximo", usuario_actual, "NO"):
-          st.rerun()
+    render_control_encuesta_en_vivo(
+        "ensayo_proximo", usuario_actual, "encuesta_ensayo_actual"
+    )
   else:
     st.info("La encuesta semanal está cerrada. El resultado queda guardado en el historial y la siguiente se abrirá el lunes a las 08:00.")
-
-  st.markdown(
-      f"<p style='text-align: center; font-size: 14px; font-weight: 800;"
-      f" color: #E74C3C; margin-top: 12px;'>{num_confirmados} Safarers han"
-      " confirmado para este viernes</p>",
-      unsafe_allow_html=True,
-  )
 
   if confirmados_list:
     st.caption(
@@ -2357,8 +2434,8 @@ if seccion_activa == "Nuestras Movidas":
   st.markdown(
       """
         <div style="background: linear-gradient(145deg, #12141a 0%, #1a0f00 100%); border: 1px solid #E74C3C; border-radius: 16px; padding: 16px; text-align: center; margin-bottom: 12px;">
-            <h4 style="color: #FFFFFF; margin: 0; font-size: 15px;">CENICA POST-ENSAYO</h4>
-            <p style="font-size: 13px; color: #FFD700; font-style: italic; font-weight: 600; margin-top: 4px; margin-bottom: 0;">¡Aquí se viene a lo que se viene!</p>
+            <h4 style="color: #FFFFFF; margin: 0; font-size: 15px;">¿HOY SE CENA DESPUÉS DEL ENSAYO?</h4>
+            <p style="font-size: 13px; color: #FFD700; font-style: italic; font-weight: 600; margin-top: 4px; margin-bottom: 0;">Encuesta semanal permanente · ¡Aquí se viene a lo que se viene!</p>
         </div>
     """,
       unsafe_allow_html=True,
@@ -2390,27 +2467,8 @@ if seccion_activa == "Nuestras Movidas":
       unsafe_allow_html=True,
   )
 
-  voto_cena_si, voto_cena_no = st.columns(2)
-  with voto_cena_si:
-    if st.button("A tope, se le da", key="btn_cena_si"):
-      if registrar_voto_backend("cena_proxima", usuario_actual, "SI"):
-        st.rerun()
-  with voto_cena_no:
-    if st.button("No puedo, tengo lío", key="btn_cena_no"):
-      if registrar_voto_backend("cena_proxima", usuario_actual, "NO"):
-        st.rerun()
-
-  df_votos_cena = obtener_todos_votos_encuesta("cena_proxima")
-  num_cenan = (
-      len(df_votos_cena[df_votos_cena["respuesta"] == "SI"])
-      if not df_votos_cena.empty
-      else 0
-  )
-  st.markdown(
-      f"<p style='text-align: center; font-size: 13px; font-weight: 800;"
-      f" color: #2ECC71; margin-top: 8px;'>🟢 {num_cenan} Safarers confirmados"
-      " para cena</p>",
-      unsafe_allow_html=True,
+  render_control_encuesta_en_vivo(
+      "cena_proxima", usuario_actual, "encuesta_cena_actual"
   )
 
   st.markdown("---")
@@ -2974,6 +3032,7 @@ if seccion_activa == "Administración":
             )
             if plan_guardado:
               st.session_state.pop("_historial_ensayos_cache", None)
+              st.session_state.pop("_plan_ensayo_actual_cache", None)
               registrar_auditoria("plan_ensayo_actualizado", usuario_actual)
               st.success("Plan semanal actualizado. La siguiente semana continuará la alternancia correcta.")
               st.rerun()
@@ -3219,6 +3278,7 @@ if seccion_activa == "Administración":
               actualizado = False
             if actualizado:
               st.session_state.usuarios_registrados[futuro_admin]["rol"] = "admin"
+              invalidar_usuarios_compartidos()
               st.success("Permiso concedido. Esa persona debe cerrar sesión y volver a entrar.")
               st.rerun()
             else:
@@ -3253,6 +3313,7 @@ if seccion_activa == "Administración":
               actualizado = False
             if actualizado:
               st.session_state.usuarios_registrados[admin_a_retirar]["rol"] = "usuario"
+              invalidar_usuarios_compartidos()
               st.success("Acceso de Administración retirado.")
               st.rerun()
             else:
@@ -3505,6 +3566,7 @@ if seccion_activa == "Administración":
           else:
             usuario_guardado = guardar_usuarios_excel()
           if usuario_guardado:
+            invalidar_usuarios_compartidos()
             st.success(f"Usuario '{socio_a_borrar}' eliminado correctamente.")
             st.rerun()
           else:

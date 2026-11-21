@@ -41,7 +41,7 @@ class CicloEnsayosTests(unittest.TestCase):
         self.assertEqual(resultado_quorum(6, 1, 0), "NO_REALIZADO")
 
     def test_cierre_del_viernes_incluye_semana_actual(self):
-        ciclos = ciclos_que_deben_cerrarse(dt.datetime(2026, 11, 20, 19, 1, tzinfo=MADRID))
+        ciclos = ciclos_que_deben_cerrarse(dt.datetime(2026, 11, 20, 19, 31, tzinfo=MADRID))
         self.assertEqual(ciclos[0]["ciclo_id"], "2026-W47")
 
 

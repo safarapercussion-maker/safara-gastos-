@@ -26,6 +26,15 @@ class ResponsivePollsTests(unittest.TestCase):
 
     def test_event_votes_share_the_lightweight_poll_control(self):
         self.assertIn('f"encuesta_bolo_{bolo_id}"', APP_SOURCE)
+        self.assertIn('st-key-vote-positive-', APP_SOURCE)
+        self.assertIn('st-key-vote-negative-', APP_SOURCE)
+        self.assertIn('if not voto_ens_actual:', APP_SOURCE)
+        self.assertIn('if not voto_bolo_actual:', APP_SOURCE)
+
+    def test_administration_prioritizes_event_launch_and_clean_download(self):
+        self.assertIn('def render_lanzador_bolo_prioritario', APP_SOURCE)
+        self.assertIn('render_lanzador_bolo_prioritario(usuario_actual)', APP_SOURCE)
+        self.assertIn('key="financial-download"', APP_SOURCE)
 
     def test_dinner_poll_is_a_permanent_visible_weekly_question(self):
         self.assertIn('¿HOY SE CENA DESPUÉS DEL ENSAYO?', APP_SOURCE)

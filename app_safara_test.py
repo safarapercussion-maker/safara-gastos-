@@ -424,6 +424,63 @@ st.markdown(
         margin-top: 6px !important;
     }}
 
+    /* Los logos son los controles reales de voto; el texto queda solo como
+       referencia accesible y no compite visualmente con la acción. */
+    div[class*="st-key-vote-positive-"] .stButton > button,
+    div[class*="st-key-vote-negative-"] .stButton > button {{
+        min-height: 116px !important;
+        margin: 0 auto 4px auto !important;
+        padding: 0 !important;
+        background-image: url('{logo_b64_inline}') !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
+        background-size: 94px 94px !important;
+        border-radius: 16px !important;
+    }}
+    div[class*="st-key-vote-positive-"] .stButton > button {{
+        background-color: rgba(18, 100, 45, 0.92) !important;
+        border-color: #39ff14 !important;
+        box-shadow: 0 0 18px rgba(57, 255, 20, 0.48) !important;
+        filter: hue-rotate(86deg) saturate(1.3) !important;
+    }}
+    div[class*="st-key-vote-negative-"] .stButton > button {{
+        background-color: rgba(126, 10, 24, 0.94) !important;
+        border-color: #ff1744 !important;
+        box-shadow: 0 0 18px rgba(255, 23, 68, 0.45) !important;
+    }}
+    div[class*="st-key-vote-positive-"] .stButton > button p,
+    div[class*="st-key-vote-negative-"] .stButton > button p {{
+        font-size: 0 !important;
+    }}
+    .poll-action-copy {{
+        text-align: center;
+        margin: 3px 0 14px 0;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.4px;
+    }}
+    .poll-action-copy.positive {{ color: #7dff9d !important; }}
+    .poll-action-copy.negative {{ color: #ff8b9b !important; }}
+
+    /* Navegación siempre legible sobre la imagen de fondo. */
+    div[data-testid="stRadio"] label p {{
+        color: #EAF0F8 !important;
+        font-weight: 700 !important;
+        text-shadow: 0 1px 4px #000000 !important;
+    }}
+    div[data-testid="stRadio"] label:has(input:checked) p {{
+        color: #FF5A4D !important;
+    }}
+
+    div[class*="st-key-financial-download"] [data-testid="stDownloadButton"] > button {{
+        background: linear-gradient(135deg, #0E6B38 0%, #064E27 100%) !important;
+        color: #FFFFFF !important;
+        border: 1px solid #55D98B !important;
+        min-height: 46px !important;
+        font-size: 0.82rem !important;
+        letter-spacing: 0.7px !important;
+    }}
+
     .ticker-container {{
         width: 100%;
         background: linear-gradient(90deg, #900C3F 0%, #C0392B 50%, #E74C3C 100%);
@@ -1187,25 +1244,29 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
   respuesta_actual = obtener_voto_usuario(encuesta_id, usuario_id)
   voto_si, voto_no = st.columns(2)
   with voto_si:
-    if st.button(
-        "A tope, se le da",
-        key=f"{clave}_si",
-        type="primary" if respuesta_actual == "SI" else "secondary",
-        use_container_width=True,
-    ):
-      if registrar_voto_backend(encuesta_id, usuario_id, "SI"):
-        st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
-        st.rerun(scope="fragment")
+    with st.container(key=f"vote-positive-{clave}"):
+      if st.button(
+          "Confirmar asistencia",
+          key=f"{clave}_si",
+          type="primary" if respuesta_actual == "SI" else "secondary",
+          use_container_width=True,
+      ):
+        if registrar_voto_backend(encuesta_id, usuario_id, "SI"):
+          st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
+          st.rerun(scope="fragment")
+    st.markdown('<p class="poll-action-copy positive">CONFIRMAR</p>', unsafe_allow_html=True)
   with voto_no:
-    if st.button(
-        "No puedo, tengo lío",
-        key=f"{clave}_no",
-        type="primary" if respuesta_actual == "NO" else "secondary",
-        use_container_width=True,
-    ):
-      if registrar_voto_backend(encuesta_id, usuario_id, "NO"):
-        st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
-        st.rerun(scope="fragment")
+    with st.container(key=f"vote-negative-{clave}"):
+      if st.button(
+          "No puedo asistir",
+          key=f"{clave}_no",
+          type="primary" if respuesta_actual == "NO" else "secondary",
+          use_container_width=True,
+      ):
+        if registrar_voto_backend(encuesta_id, usuario_id, "NO"):
+          st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
+          st.rerun(scope="fragment")
+    st.markdown('<p class="poll-action-copy negative">NO PUEDO</p>', unsafe_allow_html=True)
 
   df_votos = obtener_todos_votos_encuesta(encuesta_id)
   confirmados = (
@@ -1632,6 +1693,74 @@ def render_ajuste_saldo_rapido(usuario):
       else:
         st.session_state.saldo_caja = saldo_anterior
         st.error("No se ha podido guardar el saldo.")
+
+
+def render_lanzador_bolo_prioritario(usuario):
+  """Acción operativa principal de Administración, visible al abrir el panel."""
+  st.markdown("### Lanzar nueva encuesta de bolo")
+  st.caption("Crea la actuación y deja disponible su votación para todo el grupo.")
+  with st.form("form_crear_bolo_admin"):
+    b_tit = st.text_input("Título de la actuación")
+    b_fec = st.date_input("Fecha del evento", datetime.date.today())
+    b_hor = st.text_input("Hora", value="19:00h")
+    b_lug = st.text_input("Lugar / municipio")
+    b_est = st.selectbox(
+        "Estado inicial", ["CONFIRMADA", "EVALUACION", "STANDBY"]
+    )
+    btn_guardar_act = st.form_submit_button("PUBLICAR ENCUESTA DE BOLO")
+
+    if btn_guardar_act:
+      if not (b_tit and b_lug):
+        st.error("Completa el título y el lugar antes de publicar.")
+        return
+      duplicado = any(
+          a.get("titulo", "").strip().lower() == b_tit.strip().lower()
+          and str(a.get("fecha")) == str(b_fec)
+          for a in st.session_state.actuaciones
+      )
+      if duplicado:
+        st.warning("Ya existe una actuación registrada con este mismo título y fecha.")
+        return
+
+      storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+      if usar_almacenamiento_supabase(storage):
+        try:
+          nueva_actuacion = storage.crear_actuacion({
+              "titulo": b_tit, "fecha": b_fec, "hora": b_hor,
+              "lugar": b_lug, "estado": b_est,
+          }, usuario)
+        except SupabaseStorageOperationError:
+          nueva_actuacion = None
+        if nueva_actuacion is None:
+          st.error("No se ha podido guardar la actuación.")
+        else:
+          st.session_state.actuaciones.append(nueva_actuacion)
+          registrar_auditoria("actuacion_creada", usuario, b_tit)
+          st.success("Encuesta de bolo creada y publicada con seguridad.")
+          st.rerun()
+        return
+
+      sincronizacion_activa = sincronizacion_google_habilitada()
+      sheet_col_asignado = (
+          sincronizar_bolo_en_sheets(b_tit, b_fec, b_hor, b_lug, b_est)
+          if sincronizacion_activa else None
+      )
+      nuevo_id_act = max([a["id"] for a in st.session_state.actuaciones], default=0) + 1
+      if not sincronizacion_activa:
+        sheet_col_asignado = nuevo_id_act + 2
+      if sheet_col_asignado is None:
+        st.error("No se pudo sincronizar con Google Sheets. Comprueba la conexión.")
+        return
+      st.session_state.actuaciones.append({
+          "id": nuevo_id_act, "titulo": b_tit, "fecha": b_fec, "hora": b_hor,
+          "lugar": b_lug, "estado": b_est, "sheet_col": sheet_col_asignado,
+      })
+      if guardar_actuaciones_excel():
+        registrar_auditoria("actuacion_creada", usuario, b_tit)
+        st.success("Encuesta de bolo creada y publicada con seguridad.")
+        st.rerun()
+      else:
+        st.error("No se ha podido guardar la actuación.")
 
 
 USER_REQUIRED_COLUMNS = {
@@ -2373,45 +2502,21 @@ if seccion_activa == "Nuestras Movidas":
       unsafe_allow_html=True,
   )
 
-  st.markdown(
-      """
-        <div style="text-align: center; margin: 15px 0 10px 0;">
-            <h4 style="color: #FFFFFF; font-size: 16px; margin-bottom: 2px;">¿Le damos caña este viernes?</h4>
-            <p style="font-size: 11px; color: #AAA; margin-top: 0;">Pulsa el logo correspondiente para responder:</p>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
   if ensayo_info.get("pausado"):
     motivo_pausa = ensayo_info.get("motivo_pausa") or "Pausa programada por Administración."
     st.info(f"Esta semana no hay ensayo. {motivo_pausa}")
   elif ensayo_info["votacion_abierta"]:
     voto_ens_actual = obtener_voto_usuario("ensayo_proximo", usuario_actual)
-    img_si_cls = (
-        "poll-img-green-sel"
-        if voto_ens_actual == "SI"
-        else "poll-img-green-norm"
-    )
-    img_no_cls = (
-        "poll-img-red-sel" if voto_ens_actual == "NO" else "poll-img-red-norm"
-    )
-
-    st.markdown(
-        f"""
-          <div class="safara-poll-row">
-              <div class="safara-poll-col">
-                  <img src="{logo_b64_inline}" class="poll-img-btn {img_si_cls}" />
-                  <div class="poll-label-green">A tope, se le da</div>
-              </div>
-              <div class="safara-poll-col">
-                  <img src="{logo_b64_inline}" class="poll-img-btn {img_no_cls}" />
-                  <div class="poll-label-red">No puedo, tengo lío</div>
-              </div>
-          </div>
-      """,
-        unsafe_allow_html=True,
-    )
+    if not voto_ens_actual:
+      st.markdown(
+          """
+            <div style="text-align: center; margin: 15px 0 10px 0;">
+                <h4 style="color: #FFFFFF; font-size: 16px; margin-bottom: 2px;">¿Le damos caña este viernes?</h4>
+                <p style="font-size: 12px; color: #D9E2EC; margin-top: 0;">Elige directamente uno de los logos.</p>
+            </div>
+        """,
+          unsafe_allow_html=True,
+      )
 
     render_control_encuesta_en_vivo(
         "ensayo_proximo", usuario_actual, "encuesta_ensayo_actual"
@@ -2702,34 +2807,12 @@ if seccion_activa == "Agenda & Bolos":
             unsafe_allow_html=True,
         )
       else:
-        cls_b_si = (
-            "poll-img-green-sel"
-            if voto_bolo_actual == "SI"
-            else "poll-img-green-norm"
-        )
-        cls_b_no = (
-            "poll-img-red-sel"
-            if voto_bolo_actual == "NO"
-            else "poll-img-red-norm"
-        )
-
-        b_col_si, b_col_no = st.columns(2)
-        with b_col_si:
+        if not voto_bolo_actual:
           st.markdown(
-              f"""
-                    <div style="text-align: center;">
-                        <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_si}" />
-                    </div>
-                """,
-              unsafe_allow_html=True,
-          )
-        with b_col_no:
-          st.markdown(
-              f"""
-                    <div style="text-align: center;">
-                        <img src="{logo_b64_inline}" class="poll-img-btn {cls_b_no}" />
-                    </div>
-                """,
+              """
+                <p style="text-align:center; color:#D9E2EC; font-size:12px;
+                margin:8px 0 6px 0;">Elige directamente uno de los logos para responder.</p>
+              """,
               unsafe_allow_html=True,
           )
         render_control_encuesta_en_vivo(
@@ -3020,6 +3103,10 @@ if seccion_activa == "Administración":
   else:
     st.success("Acceso de Administración Autorizado")
 
+    # Acción operativa principal: debe quedar visible antes de la gestión interna.
+    render_lanzador_bolo_prioritario(usuario_actual)
+    st.markdown("---")
+
     st.markdown("#### Gestión del ensayo semanal")
     ensayo_admin = resolver_ensayo_actual()
     estado_ensayo_admin = "PAUSA PROGRAMADA" if ensayo_admin.get("pausado") else "ACTIVO"
@@ -3144,16 +3231,17 @@ if seccion_activa == "Administración":
           int(estado_google.get("sheets_revision", 0))
           != int(estado_google.get("sheets_synced_revision", 0))
       )
-      columnas_estado = st.columns(3)
-      columnas_estado[0].metric("Base segura", "ACTIVA")
-      columnas_estado[1].metric(
-          "Informes Google", "PENDIENTES" if informes_pendientes else "ACTUALIZADOS"
-      )
-      columnas_estado[2].metric(
-          "Copia Drive", "PENDIENTE" if estado_google.get("ultimo_error") else "AL DÍA"
-      )
+      with st.expander("Estado técnico e integraciones", expanded=False):
+        columnas_estado = st.columns(3)
+        columnas_estado[0].metric("Base segura", "ACTIVA")
+        columnas_estado[1].metric(
+            "Informes Google", "PENDIENTES" if informes_pendientes else "ACTUALIZADOS"
+        )
+        columnas_estado[2].metric(
+            "Copia Drive", "PENDIENTE" if estado_google.get("ultimo_error") else "AL DÍA"
+        )
 
-    st.markdown("#### Autorizar justificantes en Google Drive")
+    st.markdown("#### Justificantes y copia en Google Drive")
     st.caption(
         "Conecta una sola vez el Drive de SAFARA para que los tickets se guarden "
         "con su propio espacio, sin usar la cuota de la cuenta técnica."
@@ -3254,6 +3342,9 @@ if seccion_activa == "Administración":
               else:
                 st.info("El reintento ya está en curso o Drive no está disponible todavía.")
 
+    st.markdown("---")
+    st.markdown("## Altas y permisos")
+    st.caption("Invitaciones y administración de accesos. Esta zona está separada de la operativa diaria.")
     st.markdown("#### Crear código de alta")
     st.caption(
         "Cada código permite una sola alta y no se guarda en texto visible."
@@ -3357,77 +3448,6 @@ if seccion_activa == "Administración":
         st.success("Sincronización iniciada. Puedes seguir usando la aplicación.")
       else:
         st.info("No había cambios pendientes o Google no está disponible ahora mismo.")
-
-    st.markdown("---")
-    st.markdown("#### Lanzar Nueva Encuesta de Bolo")
-    with st.form("form_crear_bolo_admin"):
-      b_tit = st.text_input("Título de la Actuación")
-      b_fec = st.date_input("Fecha del Evento", datetime.date.today())
-      b_hor = st.text_input("Hora", value="19:00h")
-      b_lug = st.text_input("Lugar / Municipio")
-      b_est = st.selectbox(
-          "Estado Inicial", ["CONFIRMADA", "EVALUACION", "STANDBY"]
-      )
-      btn_guardar_act = st.form_submit_button("GUARDAR ACTUACIÓN")
-
-      if btn_guardar_act:
-        if not (b_tit and b_lug):
-          st.error(
-              "Por favor, completa el título y el lugar antes de guardar."
-          )
-        else:
-          # Validación de duplicados para evitar múltiples columnas idénticas
-          duplicado = any(
-              a.get("titulo", "").strip().lower() == b_tit.strip().lower()
-              and str(a.get("fecha")) == str(b_fec)
-              for a in st.session_state.actuaciones
-          )
-          if duplicado:
-            st.warning("Ya existe una actuación registrada con este mismo título y fecha.")
-          else:
-            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-            if usar_almacenamiento_supabase(storage):
-              try:
-                nueva_actuacion = storage.crear_actuacion({
-                    "titulo": b_tit, "fecha": b_fec, "hora": b_hor,
-                    "lugar": b_lug, "estado": b_est,
-                }, usuario_actual)
-              except SupabaseStorageOperationError:
-                nueva_actuacion = None
-              if nueva_actuacion is None:
-                st.error("No se ha podido guardar la actuación.")
-              else:
-                st.session_state.actuaciones.append(nueva_actuacion)
-                st.success("🎉 ¡Bolo creado y guardado con seguridad!")
-                registrar_auditoria("actuacion_creada", usuario_actual, b_tit)
-                st.rerun()
-            else:
-              sincronizacion_activa = sincronizacion_google_habilitada()
-              sheet_col_asignado = (
-                  sincronizar_bolo_en_sheets(b_tit, b_fec, b_hor, b_lug, b_est)
-                  if sincronizacion_activa else None
-              )
-              nuevo_id_act = max([a["id"] for a in st.session_state.actuaciones], default=0) + 1
-              if not sincronizacion_activa:
-                sheet_col_asignado = nuevo_id_act + 2
-              if sheet_col_asignado is not None:
-                st.session_state.actuaciones.append({
-                    "id": nuevo_id_act, "titulo": b_tit, "fecha": b_fec, "hora": b_hor,
-                    "lugar": b_lug, "estado": b_est, "sheet_col": sheet_col_asignado,
-                })
-                if guardar_actuaciones_excel():
-                  mensaje = (
-                      "🎉 ¡Bolo procesado y creado con éxito (sincronizado en Google Sheets)!"
-                      if sincronizacion_activa
-                      else "🎉 ¡Bolo creado y guardado localmente!"
-                  )
-                  st.success(mensaje)
-                  registrar_auditoria("actuacion_creada", usuario_actual, b_tit)
-                  st.rerun()
-                else:
-                  st.error("No se ha podido guardar la actuación.")
-              else:
-                st.error("No se pudo sincronizar con Google Sheets. Comprueba la conexión y credenciales.")
 
     st.markdown("---")
 
@@ -3670,13 +3690,15 @@ if seccion_activa == "Administración":
           f"Versión preparada el {paquete_financiero['generado_en']}. "
           "Vuelve a prepararla antes de descargar si ha habido cambios."
       )
-      st.download_button(
-          label="DESCARGAR ARCHIVO FINANCIERO",
-          data=paquete_financiero["contenido"],
-          file_name=paquete_financiero["nombre"],
-          mime="application/zip",
-          key="descargar_archivo_financiero",
-      )
+      with st.container(key="financial-download"):
+        st.download_button(
+            label="DESCARGAR ARCHIVO FINANCIERO (ZIP)",
+            data=paquete_financiero["contenido"],
+            file_name=paquete_financiero["nombre"],
+            mime="application/zip",
+            key="descargar_archivo_financiero",
+            use_container_width=True,
+        )
 
 st.divider()
 

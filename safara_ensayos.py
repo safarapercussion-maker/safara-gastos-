@@ -9,8 +9,8 @@ from zoneinfo import ZoneInfo
 
 ZONA_HORARIA = ZoneInfo("Europe/Madrid")
 HORA_APERTURA_LUNES = dt.time(8, 0)
-HORA_CIERRE_VIERNES = dt.time(19, 0)
-HORA_ENSAYO_VISIBLE = "19:00h - 19:30h"
+HORA_CIERRE_VIERNES = dt.time(19, 30)
+HORA_ENSAYO_VISIBLE = "19:30h"
 QUORUM_ENSAYO_MINIMO = 6
 
 # El ciclo de pruebas comienza con Zizur la semana del 16/11/2026.

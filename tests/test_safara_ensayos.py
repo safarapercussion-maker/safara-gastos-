@@ -27,9 +27,12 @@ class CicloEnsayosTests(unittest.TestCase):
         self.assertTrue(info["votacion_abierta"])
         self.assertEqual(info["ubicacion_nombre"], UBICACION_BARA)
 
-    def test_viernes_a_las_siete_cierra_la_encuesta(self):
-        info = informacion_ensayo(dt.datetime(2026, 11, 20, 19, 0, tzinfo=MADRID))
+    def test_viernes_a_las_diecinueve_treinta_cierra_la_encuesta(self):
+        antes = informacion_ensayo(dt.datetime(2026, 11, 20, 19, 29, tzinfo=MADRID))
+        self.assertTrue(antes["votacion_abierta"])
+        info = informacion_ensayo(dt.datetime(2026, 11, 20, 19, 30, tzinfo=MADRID))
         self.assertFalse(info["votacion_abierta"])
+        self.assertEqual(info["hora"], "19:30h")
 
     def test_quorum_exige_personas_repenike_y_caja(self):
         self.assertEqual(resultado_quorum(6, 1, 1), "CONFIRMADO")

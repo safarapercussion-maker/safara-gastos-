@@ -3241,7 +3241,7 @@ if seccion_activa == "Administración":
             "Copia Drive", "PENDIENTE" if estado_google.get("ultimo_error") else "AL DÍA"
         )
 
-    st.markdown("#### Justificantes y copia en Google Drive")
+    st.markdown("#### Autorizar justificantes en Google Drive")
     st.caption(
         "Conecta una sola vez el Drive de SAFARA para que los tickets se guarden "
         "con su propio espacio, sin usar la cuota de la cuenta técnica."

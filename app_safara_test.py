@@ -311,7 +311,13 @@ st.markdown(
         border: 1px solid #333333 !important;
     }}
 
-    input, textarea {{
+    /* Nunca estilizar todos los inputs: BaseWeb usa inputs internos para
+       selectores y buscadores. Al hacerlo aparecía una banda vacía en el
+       acceso. Se aplican estilos solo a los campos visibles de Streamlit. */
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stTextArea"] textarea,
+    div[data-testid="stNumberInput"] input,
+    div[data-testid="stDateInput"] input {{
         background-color: #121212 !important;
         color: #FFFFFF !important;
         -webkit-text-fill-color: #FFFFFF !important;
@@ -439,6 +445,54 @@ st.markdown(
     div[data-baseweb="popover"] [role="option"] {{
         color: #101318 !important;
         background: #FFFFFF !important;
+    }}
+
+    /* Acceso: tarjeta única, sobria y táctil, sin alterar el logo ni el fondo. */
+    div[data-testid="stTabs"] div[role="tabpanel"] {{
+        background: rgba(10, 12, 16, 0.86) !important;
+        border: 1px solid rgba(231, 76, 60, 0.34) !important;
+        border-radius: 16px !important;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48) !important;
+        margin-top: 10px !important;
+        padding: 22px !important;
+    }}
+    .access-intro {{
+        border-left: 3px solid #E74C3C;
+        margin: 0 0 18px 0;
+        padding: 2px 0 2px 12px;
+    }}
+    .access-intro span {{
+        color: #FF8A80;
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 1.2px;
+    }}
+    .access-intro h2 {{
+        color: #FFFFFF;
+        font-size: 1.28rem;
+        margin: 3px 0 2px 0;
+    }}
+    .access-intro p {{
+        color: #D5DAE3;
+        font-size: 0.84rem;
+        margin: 0;
+    }}
+    div[class*="st-key-btn_recuperar_toggle"] button {{
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        color: #D7DCE4 !important;
+        font-size: 0.78rem !important;
+        font-weight: 600 !important;
+        margin-top: 8px !important;
+        padding: 4px 0 !important;
+        text-align: left !important;
+        text-decoration: underline !important;
+        width: auto !important;
+    }}
+    @media (max-width: 560px) {{
+        div[data-testid="stTabs"] div[role="tabpanel"] {{ padding: 16px !important; }}
+        .access-intro h2 {{ font-size: 1.15rem; }}
     }}
 
     .codigo-alta-visible {{
@@ -865,6 +919,16 @@ def cargar_votos_remotos(_storage):
   return _storage.read_records("Votos")
 
 
+@st.cache_data(ttl=45, show_spinner=False, max_entries=1)
+def cargar_puntuacion_asistencia_remota(_storage):
+  """Comparte la lectura de puntos sin retrasar cada interacción visual.
+
+  Los votos invalidan esta copia al confirmarse, por lo que el marcador no
+  queda desactualizado cuando alguien confirma o cancela asistencia.
+  """
+  return _storage.obtener_puntuacion_asistencia()
+
+
 def recargar_votos_sin_bloquear():
   """Actualiza la copia visual de votos sin consultar Google ni bloquear la UI."""
   storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
@@ -881,8 +945,9 @@ def recargar_votos_sin_bloquear():
 
 
 def invalidar_votos_compartidos():
-  """Hace visibles inmediatamente los votos recién confirmados."""
+  """Hace visibles inmediatamente los votos y puntuaciones actualizados."""
   cargar_votos_remotos.clear()
+  cargar_puntuacion_asistencia_remota.clear()
 
 
 # --- INICIALIZACIÓN DE VOTOS ---
@@ -2065,13 +2130,21 @@ if not st.session_state.usuario_autenticado:
   tab_login, tab_registro = st.tabs(["ACCESO SAFARERS", "UNIRSE AL GRUPO"])
 
   with tab_login:
-    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="access-intro">
+          <span>ÁREA PRIVADA</span>
+          <h2>Acceso Safarers</h2>
+          <p>Selecciona tu usuario y entra al espacio del grupo.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     nombres_disponibles = ["Selecciona tu usuario..."] + sorted(
         st.session_state.usuarios_registrados.keys(), key=normalized_name_key
     )
     with st.form("form_acceso_safarers", border=False):
-      st.caption("Elige tu nombre y escribe tu contraseña.")
       nombre_login = st.selectbox(
           "Safarer",
           nombres_disponibles,
@@ -2082,7 +2155,7 @@ if not st.session_state.usuario_autenticado:
           type="password",
           placeholder="Introduce tu contraseña",
       )
-      iniciar_sesion = st.form_submit_button("¡VAAAMONOSSS!")
+      iniciar_sesion = st.form_submit_button("ENTRAR A SAFARA")
 
     if iniciar_sesion:
       bloqueado_hasta = st.session_state.bloqueado_hasta
@@ -2139,10 +2212,7 @@ if not st.session_state.usuario_autenticado:
         st.session_state.mostrar_recuperacion = False
         st.rerun()
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
   with tab_registro:
-    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
     primer_usuario = not st.session_state.usuarios_registrados
     with st.form("form_registro_completo", clear_on_submit=True):
       reg_nombre = st.text_input("Nombre y Apellidos *")
@@ -2551,7 +2621,7 @@ if seccion_activa == "Nuestras Movidas":
     st.info("La puntuación estará disponible al recuperar la base segura.")
   else:
     try:
-      puntos = storage_puntos.obtener_puntuacion_asistencia()
+      puntos = cargar_puntuacion_asistencia_remota(storage_puntos)
       opciones_puntos = {
           f"{item['nombre']} · {int(item['puntos'])} puntos": item
           for item in puntos
@@ -2854,40 +2924,44 @@ if seccion_activa == "Caja & Finanzas":
   tab_sub_reg, tab_sub_hist = st.tabs(["Registrar Gasto", "Historial de Gastos"])
 
   with tab_sub_reg:
-    categorias_safara = [
-        "Parking",
-        "Instrumentos (parches, mazas, repuestos)",
-        "Bebidas",
-        "Accesorios (Luces, complementos)",
-        "Equipamiento (Ropa)",
-        "Tasa Administración",
-        "Restaurantes / Dietas",
-        "Gasolina",
-        "Otros",
-    ]
+    # Los campos viven en un formulario: editar importe, fecha o adjunto no
+    # vuelve a ejecutar toda la aplicación hasta la confirmación final.
+    with st.form("form_registrar_gasto", border=False):
+      categorias_safara = [
+          "Parking",
+          "Instrumentos (parches, mazas, repuestos)",
+          "Bebidas",
+          "Accesorios (Luces, complementos)",
+          "Equipamiento (Ropa)",
+          "Tasa Administración",
+          "Restaurantes / Dietas",
+          "Gasolina",
+          "Otros",
+      ]
 
-    categoria_seleccionada = st.selectbox(
-        "Categoría de Gasto *", categorias_safara
-    )
-    detalle_concepto = st.text_input(
-        "Detalle adicional / Comercio",
-        placeholder="Ej. Tam Tam, Bar Río, Parking Plaza Castillo...",
-    )
-    fichero = st.file_uploader(
-        "Adjuntar Ticket (Imagen o PDF) *", type=["png", "jpg", "jpeg", "pdf"]
-    )
-    importe = st.number_input(
-        "Importe (€) *", min_value=0.0, value=0.0, step=0.50, format="%.2f"
-    )
-    fecha = st.date_input(
-        "Fecha del gasto *",
-        datetime.date.today(),
-        min_value=datetime.date(2023, 1, 1),
-        max_value=datetime.date.today() + datetime.timedelta(days=1),
-        format="DD/MM/YYYY",
-    )
+      categoria_seleccionada = st.selectbox(
+          "Categoría de Gasto *", categorias_safara
+      )
+      detalle_concepto = st.text_input(
+          "Detalle adicional / Comercio",
+          placeholder="Ej. Tam Tam, Bar Río, Parking Plaza Castillo...",
+      )
+      fichero = st.file_uploader(
+          "Adjuntar Ticket (Imagen o PDF) *", type=["png", "jpg", "jpeg", "pdf"]
+      )
+      importe = st.number_input(
+          "Importe (€) *", min_value=0.0, value=0.0, step=0.50, format="%.2f"
+      )
+      fecha = st.date_input(
+          "Fecha del gasto *",
+          datetime.date.today(),
+          min_value=datetime.date(2023, 1, 1),
+          max_value=datetime.date.today() + datetime.timedelta(days=1),
+          format="DD/MM/YYYY",
+      )
+      guardar_gasto = st.form_submit_button("Guardar y Enviar Gasto")
 
-    if st.button("Guardar y Enviar Gasto"):
+    if guardar_gasto:
       if fichero is None:
         st.error(
             "❌ ES OBLIGATORIO ADJUNTAR EL TICKET O FOTO PARA REGISTRAR EL"

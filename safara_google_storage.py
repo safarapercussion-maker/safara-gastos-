@@ -454,6 +454,10 @@ class GoogleSafaraStorage:
                     rows.append([self._cell_value(record.get(header, "")) for header in headers])
                 worksheet.clear()
                 worksheet.update("A1", rows, value_input_option="RAW")
+                if sheet_name == "Informe Gastos":
+                    self._formatear_columna_euro(worksheet, "F2:F")
+                elif sheet_name == "Informe Caja":
+                    self._formatear_columna_euro(worksheet, "B2:B")
 
             # La hoja original de Gastos es una consulta administrativa, no una
             # segunda base de datos. Se reconstruye siempre desde el informe de
@@ -482,8 +486,27 @@ class GoogleSafaraStorage:
                 ])
             expense_sheet.clear()
             expense_sheet.update("A1", expense_rows, value_input_option="RAW")
+            self._formatear_columna_euro(expense_sheet, "F2:F")
         except Exception as error:
             raise StorageOperationError("No se ha podido actualizar el informe de Google Sheets.") from error
+
+    @staticmethod
+    def _formatear_columna_euro(worksheet: Any, rango: str) -> None:
+        """Mantiene los importes como números y los presenta con moneda euro."""
+        try:
+            worksheet.format(
+                rango,
+                {
+                    "numberFormat": {
+                        "type": "CURRENCY",
+                        "pattern": '#,##0.00 [$€-es-ES]',
+                    }
+                },
+            )
+        except Exception:
+            # El informe sigue siendo correcto aunque una cuenta de Google
+            # temporalmente no admita el formato visual avanzado.
+            return
 
     def upload_backup(self, filename: str, content: bytes) -> str:
         """Guarda una copia técnica sin duplicarla si se repite el mismo día."""

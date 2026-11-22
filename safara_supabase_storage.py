@@ -743,6 +743,60 @@ class SupabaseSafaraStorage:
             return list(cursor.fetchall())
         return [dict(row) for row in self._run(callback)]
 
+    def obtener_puntuacion_asistencia(self, limite: int = 50) -> list[dict[str, Any]]:
+        """Puntuación automática desde votos afirmativos vigentes.
+
+        Un ensayo confirmado suma un punto y una actuación confirmada suma dos.
+        La consulta sólo contempla las respuestas posteriores a la activación del
+        modelo. Al modificar un voto a ``NO`` deja de cumplir el filtro y el
+        punto desaparece sin ninguna gestión adicional.
+        """
+        limite = max(1, min(int(limite), 50))
+
+        def callback(cursor):
+            cursor.execute(
+                """with configuracion as (
+                       select activada_en
+                       from safara.puntuacion_asistencia_configuracion
+                       where clave = 'votos_confirmados_desde'
+                   ), puntuacion as (
+                       select v.usuario_id,
+                              count(*) filter (
+                                where v.encuesta_id = 'ensayo_proximo'
+                              )::integer as ensayos,
+                              count(*) filter (
+                                where v.encuesta_id like 'bolo_%'
+                              )::integer as actuaciones,
+                              (count(*) filter (
+                                where v.encuesta_id = 'ensayo_proximo'
+                              ) + 2 * count(*) filter (
+                                where v.encuesta_id like 'bolo_%'
+                              ))::integer as puntos
+                       from safara.votos v
+                       cross join configuracion c
+                       where v.respuesta = 'SI'
+                         and v.actualizado_en >= c.activada_en
+                         and (
+                           v.encuesta_id = 'ensayo_proximo'
+                           or v.encuesta_id like 'bolo_%'
+                         )
+                       group by v.usuario_id
+                   )
+                   select u.nombre,
+                          coalesce(p.ensayos, 0)::integer as ensayos,
+                          coalesce(p.actuaciones, 0)::integer as actuaciones,
+                          coalesce(p.puntos, 0)::integer as puntos
+                   from safara.usuarios u
+                   left join puntuacion p on p.usuario_id = u.id
+                   where u.activo
+                   order by puntos desc, lower(u.nombre) asc
+                   limit %s""",
+                (limite,),
+            )
+            return list(cursor.fetchall())
+
+        return [dict(row) for row in self._run(callback)]
+
     def crear_actuacion(self, data: dict[str, Any], usuario: str) -> dict[str, Any]:
         def callback(cursor):
             cursor.execute(

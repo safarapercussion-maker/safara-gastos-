@@ -363,104 +363,52 @@ st.markdown(
         box-shadow: none !important;
     }}
 
-    /* --- ESTILOS EXACTOS DE LAS ENCUESTAS EN HORIZONTAL --- */
-    .safara-poll-row {{
-        display: flex !important;
-        flex-direction: row !important;
-        flex-wrap: nowrap !important;
-        justify-content: space-evenly !important;
-        align-items: flex-start !important;
-        width: 100% !important;
-        margin: 15px 0 !important;
-        box-sizing: border-box !important;
-    }}
-    .safara-poll-col {{
-        flex: 0 0 48% !important;
-        max-width: 48% !important;
-        text-align: center !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-    }}
-    .poll-img-btn {{
-        width: 85px !important;
-        height: 85px !important;
-        object-fit: contain !important;
-        cursor: pointer !important;
-        display: block !important;
-        margin: 0 auto !important;
-        transition: transform 0.2s ease, filter 0.2s ease !important;
-    }}
-    .poll-img-green-norm {{
-        filter: grayscale(1) sepia(1) saturate(5) hue-rotate(80deg) brightness(0.95) drop-shadow(0 0 6px #39ff14) !important;
-        opacity: 0.8 !important;
-    }}
-    .poll-img-green-sel {{
-        filter: grayscale(1) sepia(1) saturate(8) hue-rotate(80deg) brightness(1.25) drop-shadow(0 0 10px #39ff14) drop-shadow(0 0 22px #39ff14) !important;
-        transform: scale(1.12) !important;
-        opacity: 1 !important;
-    }}
-    .poll-img-red-norm {{
-        filter: grayscale(1) sepia(1) saturate(8) hue-rotate(320deg) brightness(0.95) drop-shadow(0 0 6px #ff1744) !important;
-        opacity: 0.8 !important;
-    }}
-    .poll-img-red-sel {{
-        filter: grayscale(1) sepia(1) saturate(10) hue-rotate(320deg) brightness(1.25) drop-shadow(0 0 10px #ff1744) drop-shadow(0 0 22px #ff1744) !important;
-        transform: scale(1.12) !important;
-        opacity: 1 !important;
-    }}
-    .poll-label-green {{
-        color: #39ff14 !important;
-        text-align: center !important;
-        font-size: 12px !important;
-        font-weight: 800 !important;
-        margin-top: 6px !important;
-    }}
-    .poll-label-red {{
-        color: #ff1744 !important;
-        text-align: center !important;
-        font-size: 12px !important;
-        font-weight: 800 !important;
-        margin-top: 6px !important;
-    }}
-
-    /* Los logos son los controles reales de voto; el texto queda solo como
-       referencia accesible y no compite visualmente con la acción. */
-    div[class*="st-key-vote-positive-"] button,
-    div[class*="st-key-vote-negative-"] button {{
-        min-height: 116px !important;
-        margin: 0 auto 4px auto !important;
-        padding: 0 !important;
+    /* Una única acción real por voto: logo + frase, sin recuadros ni botones
+       adicionales. Las zonas táctiles mantienen tamaño cómodo en móvil. */
+    div[class*="st-key-vote_positive_"] button,
+    div[class*="st-key-vote_negative_"] button {{
+        width: 148px !important;
+        max-width: 100% !important;
+        min-height: 142px !important;
+        margin: 0 auto 8px auto !important;
+        padding: 102px 4px 6px !important;
         background-image: url('{logo_b64_inline}') !important;
         background-repeat: no-repeat !important;
-        background-position: center !important;
+        background-position: center 4px !important;
         background-size: 94px 94px !important;
-        border-radius: 16px !important;
+        background-color: transparent !important;
+        border: 0 !important;
+        border-radius: 50% !important;
+        box-shadow: none !important;
+        transition: transform 0.16s ease, filter 0.16s ease !important;
     }}
-    div[class*="st-key-vote-positive-"] button {{
-        background-color: rgba(18, 100, 45, 0.92) !important;
-        border-color: #39ff14 !important;
-        box-shadow: 0 0 18px rgba(57, 255, 20, 0.48) !important;
+    div[class*="st-key-vote_positive_"] button {{
         filter: hue-rotate(86deg) saturate(1.3) !important;
     }}
-    div[class*="st-key-vote-negative-"] button {{
-        background-color: rgba(126, 10, 24, 0.94) !important;
-        border-color: #ff1744 !important;
-        box-shadow: 0 0 18px rgba(255, 23, 68, 0.45) !important;
+    div[class*="st-key-vote_negative_"] button {{
+        filter: grayscale(1) sepia(1) saturate(8) hue-rotate(320deg) !important;
     }}
-    div[class*="st-key-vote-positive-"] button p,
-    div[class*="st-key-vote-negative-"] button p {{
-        font-size: 0 !important;
+    div[class*="st-key-vote_positive_"] button p,
+    div[class*="st-key-vote_negative_"] button p {{
+        font-size: 0.82rem !important;
+        font-weight: 800 !important;
+        white-space: normal !important;
+        line-height: 1.15 !important;
+        text-align: center !important;
     }}
-    .poll-action-copy {{
-        text-align: center;
-        margin: 3px 0 14px 0;
-        font-size: 12px;
-        font-weight: 800;
-        letter-spacing: 0.4px;
+    div[class*="st-key-vote_positive_"] button p {{ color: #39ff14 !important; }}
+    div[class*="st-key-vote_negative_"] button p {{ color: #ff526c !important; }}
+    div[class*="st-key-vote_positive_"] button:hover,
+    div[class*="st-key-vote_negative_"] button:hover {{ transform: scale(1.06) !important; }}
+    @media (max-width: 560px) {{
+        div[class*="st-key-vote_positive_"] button,
+        div[class*="st-key-vote_negative_"] button {{
+            width: 132px !important;
+            min-height: 132px !important;
+            padding-top: 94px !important;
+            background-size: 86px 86px !important;
+        }}
     }}
-    .poll-action-copy.positive {{ color: #7dff9d !important; }}
-    .poll-action-copy.negative {{ color: #ff8b9b !important; }}
 
     /* Navegación siempre legible sobre la imagen de fondo. */
     div[data-testid="stRadio"] label p {{
@@ -472,21 +420,39 @@ st.markdown(
         color: #FF5A4D !important;
     }}
 
-    /* El acceso muestra personas como opciones directas, sin cuadro blanco de
-       búsqueda ni resultados vacíos. */
-    div[data-testid="stPills"] button {{
-        background: rgba(18, 18, 18, 0.92) !important;
-        color: #F4F7FB !important;
-        border: 1px solid #4A5260 !important;
-        font-weight: 700 !important;
-        box-shadow: none !important;
-        width: auto !important;
-        margin: 3px !important;
+    /* Selector de acceso clásico: siempre legible, incluso con el menú abierto. */
+    div[class*="st-key-persona_acceso_safarers"] div[data-baseweb="select"] > div {{
+        background: #FFFFFF !important;
+        color: #101318 !important;
+        border-color: #FFFFFF !important;
     }}
-    div[data-testid="stPills"] button[aria-pressed="true"] {{
-        background: linear-gradient(135deg, #B01E10 0%, #7A0000 100%) !important;
-        border-color: #FF7065 !important;
-        color: #FFFFFF !important;
+    div[class*="st-key-persona_acceso_safarers"] div[data-baseweb="select"] * {{
+        color: #101318 !important;
+        -webkit-text-fill-color: #101318 !important;
+    }}
+    div[data-baseweb="popover"] [role="listbox"],
+    div[data-baseweb="popover"] [role="listbox"] input {{
+        background: #FFFFFF !important;
+        color: #101318 !important;
+        -webkit-text-fill-color: #101318 !important;
+    }}
+    div[data-baseweb="popover"] [role="option"] {{
+        color: #101318 !important;
+        background: #FFFFFF !important;
+    }}
+
+    .codigo-alta-visible {{
+        background: #16181D;
+        border: 1px solid #FF5A4D;
+        border-radius: 10px;
+        color: #FFFFFF;
+        font-family: monospace;
+        font-size: 1rem;
+        font-weight: 800;
+        letter-spacing: 1px;
+        overflow-wrap: anywhere;
+        padding: 12px;
+        text-align: center;
     }}
 
     div[class*="st-key-financial-download"] [data-testid="stDownloadButton"] > button {{
@@ -1253,7 +1219,7 @@ def obtener_todos_votos_encuesta(encuesta_id):
 
 @st.fragment(run_every="15s")
 def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
-  """Panel ligero: actualiza resultados sin reiniciar toda la aplicación."""
+  """Dos logos táctiles reales para votar, sin controles duplicados."""
   recargar_votos_sin_bloquear()
   mensaje_guardado = st.session_state.pop(f"_{clave}_guardado", "")
   if mensaje_guardado:
@@ -1261,29 +1227,25 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
   respuesta_actual = obtener_voto_usuario(encuesta_id, usuario_id)
   voto_si, voto_no = st.columns(2)
   with voto_si:
-    with st.container(key=f"vote-positive-{clave}"):
-      if st.button(
-          "Confirmar asistencia",
-          key=f"{clave}_si",
-          type="primary" if respuesta_actual == "SI" else "secondary",
-          use_container_width=True,
-      ):
-        if registrar_voto_backend(encuesta_id, usuario_id, "SI"):
-          st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
-          st.rerun(scope="fragment")
-    st.markdown('<p class="poll-action-copy positive">CONFIRMAR</p>', unsafe_allow_html=True)
+    if st.button(
+        "A tope, se le da",
+        key=f"vote_positive_{clave}",
+        type="secondary",
+        use_container_width=False,
+    ):
+      if registrar_voto_backend(encuesta_id, usuario_id, "SI"):
+        st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
+        st.rerun(scope="fragment")
   with voto_no:
-    with st.container(key=f"vote-negative-{clave}"):
-      if st.button(
-          "No puedo asistir",
-          key=f"{clave}_no",
-          type="primary" if respuesta_actual == "NO" else "secondary",
-          use_container_width=True,
-      ):
-        if registrar_voto_backend(encuesta_id, usuario_id, "NO"):
-          st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
-          st.rerun(scope="fragment")
-    st.markdown('<p class="poll-action-copy negative">NO PUEDO</p>', unsafe_allow_html=True)
+    if st.button(
+        "No puedo, tengo lío",
+        key=f"vote_negative_{clave}",
+        type="secondary",
+        use_container_width=False,
+    ):
+      if registrar_voto_backend(encuesta_id, usuario_id, "NO"):
+        st.session_state[f"_{clave}_guardado"] = "Respuesta guardada."
+        st.rerun(scope="fragment")
 
   df_votos = obtener_todos_votos_encuesta(encuesta_id)
   confirmados = (
@@ -1293,6 +1255,8 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
   )
   if encuesta_id == "cena_proxima":
     st.caption(f"🟢 {confirmados} Safarers confirmados para cena")
+  elif str(encuesta_id).startswith("bolo_"):
+    st.caption(f"🟢 {confirmados} Safarers confirmados para este bolo")
   else:
     st.caption(f"🟢 {confirmados} Safarers confirmados para el ensayo")
 
@@ -2103,16 +2067,14 @@ if not st.session_state.usuario_autenticado:
   with tab_login:
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
 
-    nombres_disponibles = sorted(
+    nombres_disponibles = ["Selecciona tu usuario..."] + sorted(
         st.session_state.usuarios_registrados.keys(), key=normalized_name_key
     )
     with st.form("form_acceso_safarers", border=False):
       st.caption("Elige tu nombre y escribe tu contraseña.")
-      nombre_login = st.pills(
+      nombre_login = st.selectbox(
           "Safarer",
           nombres_disponibles,
-          selection_mode="single",
-          default=None,
           key="persona_acceso_safarers",
       )
       password_login = st.text_input(
@@ -2127,7 +2089,7 @@ if not st.session_state.usuario_autenticado:
       if bloqueado_hasta and datetime.datetime.now() < bloqueado_hasta:
         segundos = int((bloqueado_hasta - datetime.datetime.now()).total_seconds()) + 1
         st.error(f"Espera {segundos} segundos antes de intentarlo de nuevo.")
-      elif not nombre_login:
+      elif nombre_login == "Selecciona tu usuario...":
         st.error("Por favor, selecciona tu nombre.")
       elif not password_login:
         st.error("Por favor, introduce tu contraseña.")
@@ -2579,20 +2541,35 @@ if seccion_activa == "Nuestras Movidas":
     else:
       st.info("Aún no hay ensayos cerrados en el historial.")
 
-  if st.button("Ver puntos SAFARA", key="ver_puntos_ensayos"):
-    storage_puntos = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-    if not usar_almacenamiento_supabase(storage_puntos):
-      st.info("La clasificación estará disponible al recuperar la base segura.")
-    else:
-      try:
-        puntos = storage_puntos.obtener_puntuacion_ensayos()
-        puntos_usuario = next(
-            (int(item["puntos"]) for item in puntos if item["nombre"] == usuario_actual), 0
+  st.markdown("#### Puntuación asistencia Safarers")
+  st.caption(
+      "Confirmar un ensayo suma 1 punto y confirmar un bolo suma 2. "
+      "Si cambias tu voto a «No puedo», se actualiza automáticamente."
+  )
+  storage_puntos = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+  if not usar_almacenamiento_supabase(storage_puntos):
+    st.info("La puntuación estará disponible al recuperar la base segura.")
+  else:
+    try:
+      puntos = storage_puntos.obtener_puntuacion_asistencia()
+      opciones_puntos = {
+          f"{item['nombre']} · {int(item['puntos'])} puntos": item
+          for item in puntos
+      }
+      if opciones_puntos:
+        etiqueta_puntos = st.selectbox(
+            "Consulta la puntuación de un Safarer",
+            list(opciones_puntos),
+            key="selector_puntuacion_asistencia",
         )
-        st.success(f"Llevas {puntos_usuario} punto(s) por asistencia confirmada.")
-        st.dataframe(pd.DataFrame(puntos), use_container_width=True, hide_index=True)
-      except SupabaseStorageOperationError:
-        st.info("La clasificación no está disponible temporalmente.")
+        detalle_puntos = opciones_puntos[etiqueta_puntos]
+        st.success(
+            f"{detalle_puntos['nombre']}: {int(detalle_puntos['puntos'])} puntos "
+            f"({int(detalle_puntos['ensayos'])} ensayos · "
+            f"{int(detalle_puntos['actuaciones'])} actuaciones)."
+        )
+    except SupabaseStorageOperationError:
+      st.info("La puntuación no está disponible temporalmente.")
 
   st.markdown("---")
 
@@ -2601,32 +2578,6 @@ if seccion_activa == "Nuestras Movidas":
         <div style="background: linear-gradient(145deg, #12141a 0%, #1a0f00 100%); border: 1px solid #E74C3C; border-radius: 16px; padding: 16px; text-align: center; margin-bottom: 12px;">
             <h4 style="color: #FFFFFF; margin: 0; font-size: 15px;">¿HOY SE CENA DESPUÉS DEL ENSAYO?</h4>
             <p style="font-size: 13px; color: #FFD700; font-style: italic; font-weight: 600; margin-top: 4px; margin-bottom: 0;">Encuesta semanal permanente · ¡Aquí se viene a lo que se viene!</p>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
-  voto_cena_actual = obtener_voto_usuario("cena_proxima", usuario_actual)
-  c_img_si_cls = (
-      "poll-img-green-sel"
-      if voto_cena_actual == "SI"
-      else "poll-img-green-norm"
-  )
-  c_img_no_cls = (
-      "poll-img-red-sel" if voto_cena_actual == "NO" else "poll-img-red-norm"
-  )
-
-  st.markdown(
-      f"""
-        <div class="safara-poll-row">
-            <div class="safara-poll-col">
-                <img src="{logo_b64_inline}" class="poll-img-btn {c_img_si_cls}" />
-                <div class="poll-label-green">A tope, se le da</div>
-            </div>
-            <div class="safara-poll-col">
-                <img src="{logo_b64_inline}" class="poll-img-btn {c_img_no_cls}" />
-                <div class="poll-label-red">No puedo, tengo lío</div>
-            </div>
         </div>
     """,
       unsafe_allow_html=True,
@@ -2664,12 +2615,11 @@ if seccion_activa == "Nuestras Movidas":
   with r_col1:
     st.markdown(
         """
-            <div style="background: #12141a; border: 1px solid #E74C3C; border-radius: 12px; padding: 12px; text-align: center;">
-                <b style="color: #FFFFFF;">Instagram Oficial</b><br><br>
-                <a href="https://www.instagram.com/safarapercussion?srtk=Ym9jYTB0eWF2cjQz" target="_blank" style="background: #E1306C; color: #FFF; padding: 6px 12px; border-radius: 8px; font-weight: 800; text-decoration: none; display: inline-block; font-size: 0.75rem;">
-                    Ver Instagram
-                </a>
-            </div>
+            <a href="https://www.instagram.com/safarapercussion?srtk=Ym9jYTB0eWF2cjQz" target="_blank" rel="noopener noreferrer" style="display:block; background:#12141a; border:1px solid #E74C3C; border-radius:12px; overflow:hidden; text-align:center; text-decoration:none;">
+                <img src="https://safarapercussion.com/wp-content/uploads/2024/04/img_7410.jpeg" alt="Safara Percussion destacado en Instagram" style="display:block; width:100%; height:142px; object-fit:cover;" loading="lazy">
+                <span style="display:block; color:#FFFFFF; font-weight:800; padding:10px 8px 3px;">Instagram Oficial</span>
+                <span style="display:block; color:#FF6AA6; font-size:12px; font-weight:700; padding:0 8px 12px;">Ver contenido destacado</span>
+            </a>
         """,
         unsafe_allow_html=True,
     )
@@ -2677,15 +2627,23 @@ if seccion_activa == "Nuestras Movidas":
   with r_col2:
     st.markdown(
         """
-            <div style="background: #12141a; border: 1px solid #E74C3C; border-radius: 12px; padding: 12px; text-align: center;">
-                <b style="color: #FFFFFF;">TikTok Oficial</b><br><br>
-                <a href="https://www.tiktok.com/@safarapercussion?_r=1&_t=ZN-9ASh8h0A2Le" target="_blank" style="background: #000; color: #FFF; border: 1px solid #FFF; padding: 6px 12px; border-radius: 8px; font-weight: 800; text-decoration: none; display: inline-block; font-size: 0.75rem;">
-                    Ver TikTok
-                </a>
-            </div>
+            <a href="https://www.tiktok.com/@safarapercussion?_r=1&_t=ZN-9ASh8h0A2Le" target="_blank" rel="noopener noreferrer" style="display:block; background:#12141a; border:1px solid #E74C3C; border-radius:12px; overflow:hidden; text-align:center; text-decoration:none;">
+                <img src="https://safarapercussion.com/wp-content/uploads/2024/04/img_8808-2.jpg" alt="Safara Percussion destacado en TikTok" style="display:block; width:100%; height:142px; object-fit:cover;" loading="lazy">
+                <span style="display:block; color:#FFFFFF; font-weight:800; padding:10px 8px 3px;">TikTok Oficial</span>
+                <span style="display:block; color:#FFFFFF; font-size:12px; font-weight:700; padding:0 8px 12px;">Ver contenido destacado</span>
+            </a>
         """,
         unsafe_allow_html=True,
     )
+
+  st.markdown(
+      """
+        <p style="text-align:center; margin:14px 0 0;">
+          <a href="https://safarapercussion.com/" target="_blank" rel="noopener noreferrer" style="color:#FFD166; font-weight:800; text-decoration:none;">🌐 safarapercussion.com</a>
+        </p>
+      """,
+      unsafe_allow_html=True,
+  )
 
   st.markdown("---")
 
@@ -2807,8 +2765,6 @@ if seccion_activa == "Agenda & Bolos":
           unsafe_allow_html=True,
       )
 
-      voto_bolo_actual = obtener_voto_usuario(encuesta_key, usuario_actual)
-
       if es_anulada:
         st.markdown(
             """
@@ -2818,39 +2774,9 @@ if seccion_activa == "Agenda & Bolos":
             """,
             unsafe_allow_html=True,
         )
-      elif es_bolo_confirmado and voto_bolo_actual:
-        txt_res = (
-            "ASISTIRÉ A ESTE BOLO 🔥"
-            if voto_bolo_actual == "SI"
-            else "NO PUEDO ASISTIR ❌"
-        )
-        st.markdown(
-            f"""
-                <div style="background: rgba(46, 204, 113, 0.15); border: 1px solid #2ECC71; border-radius: 10px; padding: 10px; text-align: center; margin: 10px 0;">
-                    <p style="color: #2ECC71; font-weight: 800; font-size: 13px; margin: 0;">✅ Tu respuesta registrada: {txt_res}</p>
-                </div>
-            """,
-            unsafe_allow_html=True,
-        )
       else:
-        if not voto_bolo_actual:
-          st.markdown(
-              """
-                <p style="text-align:center; color:#D9E2EC; font-size:12px;
-                margin:8px 0 6px 0;">Elige directamente uno de los logos para responder.</p>
-              """,
-              unsafe_allow_html=True,
-          )
         render_control_encuesta_en_vivo(
             encuesta_key, usuario_actual, f"encuesta_bolo_{bolo_id}"
-        )
-
-      if not es_anulada:
-        st.markdown(
-            f"<p style='text-align: center; font-size: 13px; font-weight: 800;"
-            f" color: #2ECC71; margin-top: 4px;'>🟢 {num_conf} Safarers"
-            " confirmados para este bolo</p>",
-            unsafe_allow_html=True,
         )
 
         if confirmados_bolo:
@@ -3184,64 +3110,10 @@ if seccion_activa == "Administración":
           except SupabaseStorageOperationError:
             st.error("No se ha podido actualizar el plan del ensayo.")
 
-    if st.button("GESTIONAR ASISTENCIA Y PUNTOS", key="abrir_gestion_asistencia"):
-      st.session_state.gestion_asistencia_ensayos = True
-    if st.session_state.get("gestion_asistencia_ensayos"):
-      storage_asistencia = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-      if not usar_almacenamiento_supabase(storage_asistencia):
-        st.info("La gestión de asistencia estará disponible al recuperar la base segura.")
-      else:
-        try:
-          ensayos_cerrados = [
-              ensayo for ensayo in storage_asistencia.obtener_historial_ensayos()
-              if ensayo.get("estado") == "CONFIRMADO"
-          ]
-        except SupabaseStorageOperationError:
-          ensayos_cerrados = []
-        if not ensayos_cerrados:
-          st.info("Todavía no hay ensayos confirmados pendientes de validar asistencia.")
-        else:
-          opciones_cerradas = {
-              f"{item['fecha']} · {item['ubicacion']} · {item['ciclo_id']}": item["ciclo_id"]
-              for item in ensayos_cerrados
-          }
-          etiqueta_ensayo = st.selectbox(
-              "Ensayo cerrado", list(opciones_cerradas), key="ensayo_asistencia_elegido"
-          )
-          ciclo_asistencia = opciones_cerradas[etiqueta_ensayo]
-          try:
-            candidatos_asistencia = storage_asistencia.candidatos_asistencia_ensayo(
-                ciclo_asistencia
-            )
-          except SupabaseStorageOperationError:
-            candidatos_asistencia = []
-          nombres_asistencia = [item["nombre"] for item in candidatos_asistencia]
-          seleccion_inicial = [
-              item["nombre"] for item in candidatos_asistencia
-              if item.get("asistio") or item.get("confirmado")
-          ]
-          with st.form("form_confirmar_asistencia_ensayo"):
-            asistentes_reales = st.multiselect(
-                "Asistencia real (1 punto por persona)",
-                nombres_asistencia,
-                default=seleccion_inicial,
-            )
-            confirmar_asistencia = st.form_submit_button("CONFIRMAR ASISTENCIA Y SUMAR PUNTOS")
-            if confirmar_asistencia:
-              try:
-                total_asistencia = storage_asistencia.confirmar_asistencias_ensayo(
-                    ciclo_asistencia, asistentes_reales, usuario_actual
-                )
-                if total_asistencia >= 0:
-                  registrar_auditoria(
-                      "asistencia_ensayo_confirmada", usuario_actual, ciclo_asistencia
-                  )
-                  st.success(f"Asistencia confirmada: {total_asistencia} punto(s) actualizados.")
-                  st.rerun()
-                else:
-                  st.warning("Solo se puede confirmar asistencia de un ensayo confirmado.")
-              except SupabaseStorageOperationError:
-                st.error("No se ha podido confirmar la asistencia.")
+    st.caption(
+        "La puntuación se calcula automáticamente con los votos afirmativos: "
+        "1 punto por ensayo y 2 por actuación. No requiere validación manual."
+    )
 
     st.markdown("---")
     # Estado breve y seguro: ayuda a comprobar el circuito completo sin
@@ -3257,7 +3129,11 @@ if seccion_activa == "Administración":
           int(estado_google.get("sheets_revision", 0))
           != int(estado_google.get("sheets_synced_revision", 0))
       )
-      with st.expander("Estado técnico e integraciones", expanded=False):
+      with st.expander("Estado de seguridad y copias", expanded=False):
+        st.caption(
+            "Resumen interno: comprueba que la base segura, los informes y las "
+            "copias de tickets funcionan sin mostrar datos privados."
+        )
         columnas_estado = st.columns(3)
         columnas_estado[0].metric("Base segura", "ACTIVA")
         columnas_estado[1].metric(
@@ -3391,7 +3267,10 @@ if seccion_activa == "Administración":
     codigo_mostrado = st.session_state.get("ultimo_codigo_invitacion")
     if codigo_mostrado:
       st.success("Código creado. Cópialo y compártelo de forma privada.")
-      st.code(codigo_mostrado, language=None)
+      st.markdown(
+          f'<div class="codigo-alta-visible">{escapar_html(codigo_mostrado)}</div>',
+          unsafe_allow_html=True,
+      )
       if st.button("Ocultar código", key="ocultar_codigo_invitacion"):
         st.session_state.ultimo_codigo_invitacion = None
         st.rerun()

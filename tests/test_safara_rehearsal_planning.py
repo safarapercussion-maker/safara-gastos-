@@ -28,16 +28,18 @@ class RehearsalPlanningTests(unittest.TestCase):
         self.assertIn("Baragazte (Barañain)", source)
         self.assertIn("Gaztetxe de Zizur", source)
 
-    def test_points_are_derived_from_confirmed_attendance(self):
-        self.assertIn("def confirmar_asistencias_ensayo", STORAGE)
-        self.assertIn("delete from safara.ensayos_asistencias", STORAGE)
-        self.assertIn("def obtener_puntuacion_ensayos", STORAGE)
-        self.assertIn("count(a.ciclo_id)::integer as puntos", STORAGE)
+    def test_points_are_derived_from_current_affirmative_votes(self):
+        self.assertIn("def obtener_puntuacion_asistencia", STORAGE)
+        self.assertIn("v.respuesta = 'SI'", STORAGE)
+        self.assertIn("v.encuesta_id = 'ensayo_proximo'", STORAGE)
+        self.assertIn("v.encuesta_id like 'bolo_%'", STORAGE)
+        self.assertIn("2 * count(*)", STORAGE)
 
-    def test_administration_exposes_manual_plan_and_attendance_confirmation(self):
+    def test_administration_exposes_manual_plan_but_not_manual_points(self):
         self.assertIn("GUARDAR PLAN DEL ENSAYO", APP)
         self.assertIn("Esta semana no hay ensayo", APP)
-        self.assertIn("CONFIRMAR ASISTENCIA Y SUMAR PUNTOS", APP)
+        self.assertNotIn("CONFIRMAR ASISTENCIA Y SUMAR PUNTOS", APP)
+        self.assertIn("Puntuación asistencia Safarers", APP)
 
 
 if __name__ == "__main__":

@@ -51,9 +51,9 @@ class BootSequenceTests(unittest.TestCase):
         login_panel = APP_SOURCE.split('with tab_login:', 1)[1].split(
             'if not st.session_state.mostrar_recuperacion:', 1
         )[0]
-        self.assertIn('st.pills(', login_panel)
-        self.assertIn('selection_mode="single"', login_panel)
-        self.assertNotIn('st.selectbox("Safarer"', login_panel)
+        self.assertIn('st.selectbox(', login_panel)
+        self.assertIn('"Selecciona tu usuario..."', login_panel)
+        self.assertNotIn('st.pills(', login_panel)
 
     def test_admin_status_is_safe_when_a_previous_cached_connection_is_present(self):
         marker = "# Estado breve y seguro: ayuda a comprobar el circuito completo"

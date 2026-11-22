@@ -26,10 +26,11 @@ class ResponsivePollsTests(unittest.TestCase):
 
     def test_event_votes_share_the_lightweight_poll_control(self):
         self.assertIn('f"encuesta_bolo_{bolo_id}"', APP_SOURCE)
-        self.assertIn('st-key-vote-positive-', APP_SOURCE)
-        self.assertIn('st-key-vote-negative-', APP_SOURCE)
-        self.assertIn('if not voto_ens_actual:', APP_SOURCE)
-        self.assertIn('if not voto_bolo_actual:', APP_SOURCE)
+        self.assertIn('st-key-vote_positive_', APP_SOURCE)
+        self.assertIn('st-key-vote_negative_', APP_SOURCE)
+        self.assertIn('"A tope, se le da"', APP_SOURCE)
+        self.assertIn('"No puedo, tengo lío"', APP_SOURCE)
+        self.assertNotIn('"CONFIRMAR"', APP_SOURCE)
 
     def test_administration_prioritizes_event_launch_and_clean_download(self):
         self.assertIn('def render_lanzador_bolo_prioritario', APP_SOURCE)

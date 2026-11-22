@@ -370,49 +370,91 @@ st.markdown(
     }}
 
     /* Una única acción real por voto: logo + frase, sin recuadros ni botones
-       adicionales. Las zonas táctiles mantienen tamaño cómodo en móvil. */
+       adicionales. Se mantienen en una sola fila incluso en móvil. */
+    div[data-testid="stHorizontalBlock"]:has(div[class*="st-key-vote_positive_"]):has(div[class*="st-key-vote_negative_"]) {{
+        flex-wrap: nowrap !important;
+        gap: 8px !important;
+    }}
+    div[data-testid="stHorizontalBlock"]:has(div[class*="st-key-vote_positive_"]):has(div[class*="st-key-vote_negative_"]) > div[data-testid="stColumn"] {{
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        width: calc(50% - 4px) !important;
+    }}
     div[class*="st-key-vote_positive_"] button,
     div[class*="st-key-vote_negative_"] button {{
-        width: 148px !important;
-        max-width: 100% !important;
-        min-height: 142px !important;
+        position: relative !important;
+        width: 100% !important;
+        max-width: 176px !important;
+        min-height: 148px !important;
         margin: 0 auto 8px auto !important;
-        padding: 102px 4px 6px !important;
-        background-image: url('{logo_b64_inline}') !important;
-        background-repeat: no-repeat !important;
-        background-position: center 4px !important;
-        background-size: 94px 94px !important;
+        padding: 108px 4px 8px !important;
         background-color: transparent !important;
-        border: 0 !important;
-        border-radius: 50% !important;
+        border: 1px solid transparent !important;
+        border-radius: 18px !important;
         box-shadow: none !important;
-        transition: transform 0.16s ease, filter 0.16s ease !important;
+        transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease !important;
     }}
-    div[class*="st-key-vote_positive_"] button {{
-        filter: hue-rotate(86deg) saturate(1.3) !important;
+    div[class*="st-key-vote_positive_"] button::before,
+    div[class*="st-key-vote_negative_"] button::before {{
+        content: "" !important;
+        position: absolute !important;
+        top: 8px !important;
+        left: 50% !important;
+        width: 94px !important;
+        height: 94px !important;
+        transform: translateX(-50%) !important;
+        background: currentColor !important;
+        -webkit-mask: url('{logo_b64_inline}') center / contain no-repeat !important;
+        mask: url('{logo_b64_inline}') center / contain no-repeat !important;
+        pointer-events: none !important;
     }}
+    div[class*="st-key-vote_positive_"] button {{ color: #39FF14 !important; }}
+    div[class*="st-key-vote_negative_"] button {{ color: #FF1744 !important; }}
+    div[class*="st-key-vote_positive_"] button p {{ color: #39FF14 !important; }}
+    div[class*="st-key-vote_negative_"] button p {{ color: #FF1744 !important; }}
+    div[class*="st-key-vote_positive_"] button,
     div[class*="st-key-vote_negative_"] button {{
-        filter: grayscale(1) sepia(1) saturate(8) hue-rotate(320deg) !important;
+        opacity: 0.56 !important;
     }}
     div[class*="st-key-vote_positive_"] button p,
     div[class*="st-key-vote_negative_"] button p {{
+        position: relative !important;
+        z-index: 1 !important;
         font-size: 0.82rem !important;
         font-weight: 800 !important;
         white-space: normal !important;
         line-height: 1.15 !important;
         text-align: center !important;
     }}
-    div[class*="st-key-vote_positive_"] button p {{ color: #39ff14 !important; }}
-    div[class*="st-key-vote_negative_"] button p {{ color: #ff526c !important; }}
+    div[class*="st-key-vote_positive_selected_"] button {{
+        background: rgba(57, 255, 20, 0.13) !important;
+        border-color: #39FF14 !important;
+        box-shadow: 0 0 14px rgba(57, 255, 20, 0.95), inset 0 0 15px rgba(57, 255, 20, 0.18) !important;
+        opacity: 1 !important;
+        transform: translateY(-2px) scale(1.025) !important;
+    }}
+    div[class*="st-key-vote_negative_selected_"] button {{
+        background: rgba(255, 23, 68, 0.14) !important;
+        border-color: #FF1744 !important;
+        box-shadow: 0 0 14px rgba(255, 23, 68, 0.95), inset 0 0 15px rgba(255, 23, 68, 0.18) !important;
+        opacity: 1 !important;
+        transform: translateY(-2px) scale(1.025) !important;
+    }}
     div[class*="st-key-vote_positive_"] button:hover,
-    div[class*="st-key-vote_negative_"] button:hover {{ transform: scale(1.06) !important; }}
+    div[class*="st-key-vote_negative_"] button:hover {{
+        opacity: 1 !important;
+        transform: scale(1.06) !important;
+    }}
     @media (max-width: 560px) {{
         div[class*="st-key-vote_positive_"] button,
         div[class*="st-key-vote_negative_"] button {{
-            width: 132px !important;
-            min-height: 132px !important;
-            padding-top: 94px !important;
-            background-size: 86px 86px !important;
+            min-height: 136px !important;
+            padding-top: 100px !important;
+        }}
+        div[class*="st-key-vote_positive_"] button::before,
+        div[class*="st-key-vote_negative_"] button::before {{
+            width: 84px !important;
+            height: 84px !important;
         }}
     }}
 
@@ -1290,11 +1332,21 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
   if mensaje_guardado:
     st.success(mensaje_guardado)
   respuesta_actual = obtener_voto_usuario(encuesta_id, usuario_id)
+  clave_si = (
+      f"vote_positive_selected_{clave}"
+      if respuesta_actual == "SI"
+      else f"vote_positive_{clave}"
+  )
+  clave_no = (
+      f"vote_negative_selected_{clave}"
+      if respuesta_actual == "NO"
+      else f"vote_negative_{clave}"
+  )
   voto_si, voto_no = st.columns(2)
   with voto_si:
     if st.button(
         "A tope, se le da",
-        key=f"vote_positive_{clave}",
+        key=clave_si,
         type="secondary",
         use_container_width=False,
     ):
@@ -1304,7 +1356,7 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
   with voto_no:
     if st.button(
         "No puedo, tengo lío",
-        key=f"vote_negative_{clave}",
+        key=clave_no,
         type="secondary",
         use_container_width=False,
     ):

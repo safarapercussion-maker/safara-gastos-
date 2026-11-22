@@ -47,6 +47,14 @@ class BootSequenceTests(unittest.TestCase):
         self.assertNotIn("actualizar_informes_y_copias_en_segundo_plano()", section)
         self.assertIn("Nunca se ejecuta al entrar", section)
 
+    def test_login_uses_direct_user_choices_without_a_search_popup(self):
+        login_panel = APP_SOURCE.split('with tab_login:', 1)[1].split(
+            'if not st.session_state.mostrar_recuperacion:', 1
+        )[0]
+        self.assertIn('st.pills(', login_panel)
+        self.assertIn('selection_mode="single"', login_panel)
+        self.assertNotIn('st.selectbox("Safarer"', login_panel)
+
     def test_admin_status_is_safe_when_a_previous_cached_connection_is_present(self):
         marker = "# Estado breve y seguro: ayuda a comprobar el circuito completo"
         section = APP_SOURCE.split(marker, 1)[1].split("if estado_google:", 1)[0]

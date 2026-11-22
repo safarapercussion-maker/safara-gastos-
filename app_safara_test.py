@@ -426,8 +426,8 @@ st.markdown(
 
     /* Los logos son los controles reales de voto; el texto queda solo como
        referencia accesible y no compite visualmente con la acción. */
-    div[class*="st-key-vote-positive-"] .stButton > button,
-    div[class*="st-key-vote-negative-"] .stButton > button {{
+    div[class*="st-key-vote-positive-"] button,
+    div[class*="st-key-vote-negative-"] button {{
         min-height: 116px !important;
         margin: 0 auto 4px auto !important;
         padding: 0 !important;
@@ -437,19 +437,19 @@ st.markdown(
         background-size: 94px 94px !important;
         border-radius: 16px !important;
     }}
-    div[class*="st-key-vote-positive-"] .stButton > button {{
+    div[class*="st-key-vote-positive-"] button {{
         background-color: rgba(18, 100, 45, 0.92) !important;
         border-color: #39ff14 !important;
         box-shadow: 0 0 18px rgba(57, 255, 20, 0.48) !important;
         filter: hue-rotate(86deg) saturate(1.3) !important;
     }}
-    div[class*="st-key-vote-negative-"] .stButton > button {{
+    div[class*="st-key-vote-negative-"] button {{
         background-color: rgba(126, 10, 24, 0.94) !important;
         border-color: #ff1744 !important;
         box-shadow: 0 0 18px rgba(255, 23, 68, 0.45) !important;
     }}
-    div[class*="st-key-vote-positive-"] .stButton > button p,
-    div[class*="st-key-vote-negative-"] .stButton > button p {{
+    div[class*="st-key-vote-positive-"] button p,
+    div[class*="st-key-vote-negative-"] button p {{
         font-size: 0 !important;
     }}
     .poll-action-copy {{
@@ -470,6 +470,23 @@ st.markdown(
     }}
     div[data-testid="stRadio"] label:has(input:checked) p {{
         color: #FF5A4D !important;
+    }}
+
+    /* El acceso muestra personas como opciones directas, sin cuadro blanco de
+       búsqueda ni resultados vacíos. */
+    div[data-testid="stPills"] button {{
+        background: rgba(18, 18, 18, 0.92) !important;
+        color: #F4F7FB !important;
+        border: 1px solid #4A5260 !important;
+        font-weight: 700 !important;
+        box-shadow: none !important;
+        width: auto !important;
+        margin: 3px !important;
+    }}
+    div[data-testid="stPills"] button[aria-pressed="true"] {{
+        background: linear-gradient(135deg, #B01E10 0%, #7A0000 100%) !important;
+        border-color: #FF7065 !important;
+        color: #FFFFFF !important;
     }}
 
     div[class*="st-key-financial-download"] [data-testid="stDownloadButton"] > button {{
@@ -2086,22 +2103,31 @@ if not st.session_state.usuario_autenticado:
   with tab_login:
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
 
-    nombres_disponibles = ["Selecciona tu usuario..."] + sorted(
+    nombres_disponibles = sorted(
         st.session_state.usuarios_registrados.keys(), key=normalized_name_key
     )
-    nombre_login = st.selectbox("Safarer", nombres_disponibles)
-    password_login = st.text_input(
-        "Contraseña de Acceso",
-        type="password",
-        placeholder="Introduce tu contraseña",
-    )
+    with st.form("form_acceso_safarers", border=False):
+      st.caption("Elige tu nombre y escribe tu contraseña.")
+      nombre_login = st.pills(
+          "Safarer",
+          nombres_disponibles,
+          selection_mode="single",
+          default=None,
+          key="persona_acceso_safarers",
+      )
+      password_login = st.text_input(
+          "Contraseña de Acceso",
+          type="password",
+          placeholder="Introduce tu contraseña",
+      )
+      iniciar_sesion = st.form_submit_button("¡VAAAMONOSSS!")
 
-    if st.button("¡VAAAMONOSSS!"):
+    if iniciar_sesion:
       bloqueado_hasta = st.session_state.bloqueado_hasta
       if bloqueado_hasta and datetime.datetime.now() < bloqueado_hasta:
         segundos = int((bloqueado_hasta - datetime.datetime.now()).total_seconds()) + 1
         st.error(f"Espera {segundos} segundos antes de intentarlo de nuevo.")
-      elif nombre_login == "Selecciona tu usuario...":
+      elif not nombre_login:
         st.error("Por favor, selecciona tu nombre.")
       elif not password_login:
         st.error("Por favor, introduce tu contraseña.")

@@ -388,9 +388,9 @@ st.markdown(
         min-height: 148px !important;
         margin: 0 auto 8px auto !important;
         padding: 108px 4px 8px !important;
-        background-color: transparent !important;
-        border: 1px solid transparent !important;
-        border-radius: 18px !important;
+        background: transparent !important;
+        border: 0 !important;
+        border-radius: 0 !important;
         box-shadow: none !important;
         transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease !important;
     }}
@@ -427,18 +427,32 @@ st.markdown(
         text-align: center !important;
     }}
     div[class*="st-key-vote_positive_selected_"] button {{
-        background: rgba(57, 255, 20, 0.13) !important;
-        border-color: #39FF14 !important;
-        box-shadow: 0 0 14px rgba(57, 255, 20, 0.95), inset 0 0 15px rgba(57, 255, 20, 0.18) !important;
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
         opacity: 1 !important;
-        transform: translateY(-2px) scale(1.025) !important;
+        transform: none !important;
     }}
     div[class*="st-key-vote_negative_selected_"] button {{
-        background: rgba(255, 23, 68, 0.14) !important;
-        border-color: #FF1744 !important;
-        box-shadow: 0 0 14px rgba(255, 23, 68, 0.95), inset 0 0 15px rgba(255, 23, 68, 0.18) !important;
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
         opacity: 1 !important;
-        transform: translateY(-2px) scale(1.025) !important;
+        transform: none !important;
+    }}
+    div[class*="st-key-vote_positive_selected_"] button::before {{
+        filter: drop-shadow(0 0 9px #39FF14) drop-shadow(0 0 18px rgba(57, 255, 20, 0.9)) !important;
+        transform: translateX(-50%) translateY(-3px) scale(1.08) !important;
+    }}
+    div[class*="st-key-vote_negative_selected_"] button::before {{
+        filter: drop-shadow(0 0 9px #FF1744) drop-shadow(0 0 18px rgba(255, 23, 68, 0.9)) !important;
+        transform: translateX(-50%) translateY(-3px) scale(1.08) !important;
+    }}
+    div[class*="st-key-vote_positive_selected_"] button p {{
+        text-shadow: 0 0 8px rgba(57, 255, 20, 0.9) !important;
+    }}
+    div[class*="st-key-vote_negative_selected_"] button p {{
+        text-shadow: 0 0 8px rgba(255, 23, 68, 0.9) !important;
     }}
     div[class*="st-key-vote_positive_"] button:hover,
     div[class*="st-key-vote_negative_"] button:hover {{
@@ -961,14 +975,20 @@ def cargar_votos_remotos(_storage):
   return _storage.read_records("Votos")
 
 
-@st.cache_data(ttl=45, show_spinner=False, max_entries=1)
+@st.cache_data(ttl=15, show_spinner=False, max_entries=1)
 def cargar_puntuacion_asistencia_remota(_storage):
-  """Comparte la lectura de puntos sin retrasar cada interacción visual.
+  """Comparte una lectura segura de puntos sin retrasar la pantalla.
 
-  Los votos invalidan esta copia al confirmarse, por lo que el marcador no
-  queda desactualizado cuando alguien confirma o cancela asistencia.
+  La puntuación es informativa: una incidencia breve de conexión no puede
+  romper la página principal ni impedir que se vote. En tal caso se devuelve
+  un estado neutro y el llamador conserva la última lectura válida.
   """
-  return _storage.obtener_puntuacion_asistencia()
+  try:
+    return {"disponible": True, "puntos": _storage.obtener_puntuacion_asistencia()}
+  except Exception:
+    # La excepción queda contenida dentro de la caché de Streamlit. No se
+    # expone información técnica y la siguiente lectura se reintentará pronto.
+    return {"disponible": False, "puntos": []}
 
 
 def recargar_votos_sin_bloquear():
@@ -2672,26 +2692,30 @@ if seccion_activa == "Nuestras Movidas":
   if not usar_almacenamiento_supabase(storage_puntos):
     st.info("La puntuación estará disponible al recuperar la base segura.")
   else:
-    try:
-      puntos = cargar_puntuacion_asistencia_remota(storage_puntos)
-      opciones_puntos = {
-          f"{item['nombre']} · {int(item['puntos'])} puntos": item
-          for item in puntos
-      }
-      if opciones_puntos:
-        etiqueta_puntos = st.selectbox(
-            "Consulta la puntuación de un Safarer",
-            list(opciones_puntos),
-            key="selector_puntuacion_asistencia",
-        )
-        detalle_puntos = opciones_puntos[etiqueta_puntos]
-        st.success(
-            f"{detalle_puntos['nombre']}: {int(detalle_puntos['puntos'])} puntos "
-            f"({int(detalle_puntos['ensayos'])} ensayos · "
-            f"{int(detalle_puntos['actuaciones'])} actuaciones)."
-        )
-    except SupabaseStorageOperationError:
-      st.info("La puntuación no está disponible temporalmente.")
+    lectura_puntos = cargar_puntuacion_asistencia_remota(storage_puntos)
+    if lectura_puntos.get("disponible"):
+      st.session_state.puntuacion_asistencia_ultima = lectura_puntos["puntos"]
+    puntos = st.session_state.get("puntuacion_asistencia_ultima", [])
+    if not lectura_puntos.get("disponible"):
+      st.caption(
+          "La puntuación se está actualizando; el resto de la aplicación sigue disponible."
+      )
+    opciones_puntos = {
+        f"{item['nombre']} · {int(item['puntos'])} puntos": item
+        for item in puntos
+    }
+    if opciones_puntos:
+      etiqueta_puntos = st.selectbox(
+          "Consulta la puntuación de un Safarer",
+          list(opciones_puntos),
+          key="selector_puntuacion_asistencia",
+      )
+      detalle_puntos = opciones_puntos[etiqueta_puntos]
+      st.success(
+          f"{detalle_puntos['nombre']}: {int(detalle_puntos['puntos'])} puntos "
+          f"({int(detalle_puntos['ensayos'])} ensayos · "
+          f"{int(detalle_puntos['actuaciones'])} actuaciones)."
+      )
 
   st.markdown("---")
 

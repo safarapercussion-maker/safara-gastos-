@@ -3239,10 +3239,15 @@ if seccion_activa == "Administración":
   else:
     st.success("Acceso de Administración Autorizado")
 
+    def conservar_area_administracion():
+      # Streamlit 1.51 permite deseleccionar un segmento; conservamos una vista.
+      if st.session_state.get("area_administracion") is None:
+        st.session_state.area_administracion = "Actividad"
+
     seccion_admin = st.segmented_control(
         "Área de Administración", ["Actividad", "Safarers", "Control"],
-        default="Actividad", key="area_administracion", required=True,
-        label_visibility="collapsed",
+        default="Actividad", key="area_administracion",
+        on_change=conservar_area_administracion, label_visibility="collapsed",
     )
     if seccion_admin == "Actividad":
       # Acción operativa principal: debe quedar visible antes de la gestión interna.

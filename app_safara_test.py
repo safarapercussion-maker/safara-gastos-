@@ -303,6 +303,25 @@ st.markdown(
         padding-top: 0 !important;
         margin-bottom: 2px !important;
     }}
+    div[data-testid="stWidgetLabel"] p,
+    div[data-testid="stCaptionContainer"] p,
+    div[data-testid="stTabs"] button[role="tab"] p,
+    div[data-testid="stMetricLabel"] p {{
+        color: #CFD5DE !important;
+        -webkit-text-fill-color: #CFD5DE !important;
+    }}
+    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] p {{
+        color: #FF6659 !important;
+        -webkit-text-fill-color: #FF6659 !important;
+    }}
+    div[class*="st-key-area_administracion"] button p {{
+        color: #CFD5DE !important;
+        -webkit-text-fill-color: #CFD5DE !important;
+    }}
+    div[class*="st-key-area_administracion"] button[aria-pressed="true"] p {{
+        color: #FFFFFF !important;
+        -webkit-text-fill-color: #FFFFFF !important;
+    }}
 
     div[data-baseweb="select"] > div {{
         background-color: #121212 !important;
@@ -1394,6 +1413,24 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
     st.caption(f"🟢 {confirmados} Safarers confirmados para cena")
   elif str(encuesta_id).startswith("bolo_"):
     st.caption(f"🟢 {confirmados} Safarers confirmados para este bolo")
+    st.markdown("**Personas apuntadas por instrumento**")
+    por_instrumento = {}
+    if not df_votos.empty:
+      for nombre_confirmado in df_votos[df_votos["respuesta"] == "SI"]["usuario_id"]:
+        instrumento = str(
+            st.session_state.usuarios_registrados.get(nombre_confirmado, {}).get(
+                "instrumento") or "Sin instrumento asignado"
+        )
+        por_instrumento.setdefault(instrumento, []).append(str(nombre_confirmado))
+    if por_instrumento:
+      for instrumento, personas in sorted(por_instrumento.items()):
+        st.markdown(
+            f"**{escapar_html(instrumento)} ({len(personas)}):** "
+            + ", ".join(escapar_html(persona) for persona in sorted(personas)),
+            unsafe_allow_html=True,
+        )
+    else:
+      st.caption("Todavía no hay personas apuntadas a este bolo.")
   else:
     st.caption(f"🟢 {confirmados} Safarers confirmados para el ensayo")
 
@@ -2740,15 +2777,32 @@ if seccion_activa == "Nuestras Movidas":
       unsafe_allow_html=True,
   )
 
-  m_col1, m_col2, m_col3 = st.columns(3)
-  with m_col1:
-    st.metric("2024", "5 bolos")
-  with m_col2:
-    st.metric("2025", "21 bolos")
-  with m_col3:
-    st.metric("2026", "14 bolos")
-
-  st.caption("CRECIMIENTO: ¡Más de 40 bolos acumuladas! ¡Esto está que arde!")
+  actuaciones_validas = [
+      actuacion for actuacion in st.session_state.actuaciones
+      if str(actuacion.get("estado", "")).upper() != "ANULADA"
+  ]
+  actuaciones_por_anio = {}
+  for actuacion in actuaciones_validas:
+    fecha_actuacion = actuacion.get("fecha")
+    try:
+      if isinstance(fecha_actuacion, datetime.date):
+        anio_actuacion = fecha_actuacion.year
+      else:
+        texto_fecha = str(fecha_actuacion)
+        anio_actuacion = int(
+            texto_fecha.split("/")[-1] if "/" in texto_fecha
+            else texto_fecha[:4]
+        )
+    except (TypeError, ValueError):
+      continue
+    actuaciones_por_anio[anio_actuacion] = actuaciones_por_anio.get(anio_actuacion, 0) + 1
+  if actuaciones_por_anio:
+    columnas_anios = st.columns(min(len(actuaciones_por_anio), 3))
+    for indice, (anio, cantidad) in enumerate(sorted(actuaciones_por_anio.items())):
+      columnas_anios[indice % len(columnas_anios)].metric(str(anio), f"{cantidad} bolos")
+    st.caption(f"{len(actuaciones_validas)} actuaciones registradas sin anular.")
+  else:
+    st.info("Todavía no hay actuaciones registradas para mostrar.")
 
   st.markdown("---")
 
@@ -2883,6 +2937,10 @@ if seccion_activa == "Agenda & Bolos":
         )
         color_badge = "#2ECC71"
         border_card = "2px solid #2ECC71"
+      elif estado_ev_raw == "STANDBY":
+        estado_badge = f"🟠 STANDBY ({num_conf} PERSONAS APUNTADAS)"
+        color_badge = "#F3A83B"
+        border_card = "1px solid #F3A83B"
       else:
         estado_badge = (
             f"🟡 EN EVALUACIÓN ({num_conf}/{QUORUM_BOLO_MINIMO} VOTOS)"
@@ -2924,30 +2982,6 @@ if seccion_activa == "Agenda & Bolos":
         render_control_encuesta_en_vivo(
             encuesta_key, usuario_actual, f"encuesta_bolo_{bolo_id}"
         )
-
-        if confirmados_bolo:
-          counts_b = {
-              "Repenike": 0,
-              "Caja": 0,
-              "Surdo": 0,
-              "Surdo de contra": 0,
-              "Ganza (bailarinas)": 0,
-          }
-          for c_user in confirmados_bolo:
-            u_inst = st.session_state.usuarios_registrados.get(c_user, {}).get(
-                "instrumento", "Repenike"
-            )
-            if u_inst in counts_b:
-              counts_b[u_inst] += 1
-            else:
-              counts_b["Repenike"] += 1
-
-          st.caption(
-              f"Repenikes: {counts_b['Repenike']} | Cajas: {counts_b['Caja']} |"
-              f" Surdos: {counts_b['Surdo']} | Surdos de contra:"
-              f" {counts_b['Surdo de contra']} | Bailarinas:"
-              f" {counts_b['Ganza (bailarinas)']}"
-          )
 
       st.markdown("---")
 
@@ -3205,555 +3239,564 @@ if seccion_activa == "Administración":
   else:
     st.success("Acceso de Administración Autorizado")
 
-    # Acción operativa principal: debe quedar visible antes de la gestión interna.
-    render_lanzador_bolo_prioritario(usuario_actual)
-    st.markdown("---")
-
-    st.markdown("#### Gestión del ensayo semanal")
-    ensayo_admin = resolver_ensayo_actual()
-    estado_ensayo_admin = "PAUSA PROGRAMADA" if ensayo_admin.get("pausado") else "ACTIVO"
-    st.caption(
-        f"{ensayo_admin['ciclo_id']} · {ensayo_admin['fecha'].strftime('%d/%m/%Y')} · "
-        f"{estado_ensayo_admin}. Cambiar la ubicación reajusta la alternancia "
-        "desde esta semana; una pausa no la altera."
+    seccion_admin = st.segmented_control(
+        "Área de Administración", ["Actividad", "Safarers", "Control"],
+        default="Actividad", key="area_administracion", required=True,
+        label_visibility="collapsed",
     )
-    with st.form("form_plan_ensayo_semanal"):
-      opciones_ubicacion = list(UBICACIONES_ENSAYO.keys())
-      indice_ubicacion = (
-          opciones_ubicacion.index(ensayo_admin["ubicacion_nombre"])
-          if ensayo_admin["ubicacion_nombre"] in opciones_ubicacion else 0
-      )
-      ubicacion_planificada = st.selectbox(
-          "Ubicación del ensayo", opciones_ubicacion, index=indice_ubicacion
-      )
-      pausa_planificada = st.checkbox(
-          "Esta semana no hay ensayo", value=bool(ensayo_admin.get("pausado"))
-      )
-      motivo_planificado = st.text_input(
-          "Motivo de la pausa (opcional)",
-          value=str(ensayo_admin.get("motivo_pausa") or ""),
-          disabled=not pausa_planificada,
-      )
-      guardar_plan = st.form_submit_button("GUARDAR PLAN DEL ENSAYO")
-      if guardar_plan:
-        storage_plan = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-        if not usar_almacenamiento_supabase(storage_plan):
-          st.error("No se puede cambiar el plan mientras la base segura no esté disponible.")
-        else:
-          try:
-            plan_guardado = storage_plan.actualizar_plan_ensayo(
-                str(ensayo_admin["ciclo_id"]),
-                ensayo_admin["lunes"],
-                ubicacion_planificada,
-                pausa_planificada,
-                motivo_planificado,
-                usuario_actual,
-            )
-            if plan_guardado:
-              st.session_state.pop("_historial_ensayos_cache", None)
-              st.session_state.pop("_plan_ensayo_actual_cache", None)
-              registrar_auditoria("plan_ensayo_actualizado", usuario_actual)
-              st.success("Plan semanal actualizado. La siguiente semana continuará la alternancia correcta.")
-              st.rerun()
-            else:
-              st.warning("Ese ensayo ya está cerrado y solo queda disponible en el historial.")
-          except SupabaseStorageOperationError:
-            st.error("No se ha podido actualizar el plan del ensayo.")
+    if seccion_admin == "Actividad":
+      # Acción operativa principal: debe quedar visible antes de la gestión interna.
+      render_lanzador_bolo_prioritario(usuario_actual)
+      st.markdown("---")
 
-    st.caption(
-        "La puntuación se calcula automáticamente con los votos afirmativos: "
-        "1 punto por ensayo y 2 por actuación. No requiere validación manual."
-    )
-
-    st.markdown("---")
-    # Estado breve y seguro: ayuda a comprobar el circuito completo sin
-    # mostrar URLs privadas, tokens ni mensajes técnicos del proveedor.
-    try:
-      estado_seguro, _ = diagnostico_supabase_para_administracion()
-      obtener_estado_google = getattr(estado_seguro, "estado_mantenimiento_google", None)
-      estado_google = obtener_estado_google() if callable(obtener_estado_google) else {}
-    except (AttributeError, SupabaseStorageOperationError):
-      estado_google = {}
-    if estado_google:
-      informes_pendientes = (
-          int(estado_google.get("sheets_revision", 0))
-          != int(estado_google.get("sheets_synced_revision", 0))
+      st.markdown("#### Gestión del ensayo semanal")
+      ensayo_admin = resolver_ensayo_actual()
+      estado_ensayo_admin = "PAUSA PROGRAMADA" if ensayo_admin.get("pausado") else "ACTIVO"
+      st.caption(
+          f"{ensayo_admin['ciclo_id']} · {ensayo_admin['fecha'].strftime('%d/%m/%Y')} · "
+          f"{estado_ensayo_admin}. Cambiar la ubicación reajusta la alternancia "
+          "desde esta semana; una pausa no la altera."
       )
-      with st.expander("Estado de seguridad y copias", expanded=False):
-        st.caption(
-            "Resumen interno: comprueba que la base segura, los informes y las "
-            "copias de tickets funcionan sin mostrar datos privados."
+      with st.form("form_plan_ensayo_semanal"):
+        opciones_ubicacion = list(UBICACIONES_ENSAYO.keys())
+        indice_ubicacion = (
+            opciones_ubicacion.index(ensayo_admin["ubicacion_nombre"])
+            if ensayo_admin["ubicacion_nombre"] in opciones_ubicacion else 0
         )
-        columnas_estado = st.columns(3)
-        columnas_estado[0].metric("Base segura", "ACTIVA")
-        columnas_estado[1].metric(
-            "Informes Google", "PENDIENTES" if informes_pendientes else "ACTUALIZADOS"
+        ubicacion_planificada = st.selectbox(
+            "Ubicación del ensayo", opciones_ubicacion, index=indice_ubicacion
         )
-        columnas_estado[2].metric(
-            "Copia Drive", "PENDIENTE" if estado_google.get("ultimo_error") else "AL DÍA"
+        pausa_planificada = st.checkbox(
+            "Esta semana no hay ensayo", value=bool(ensayo_admin.get("pausado"))
         )
-
-    st.markdown("#### Autorizar justificantes en Google Drive")
-    st.caption(
-        "Conecta una sola vez el Drive de SAFARA para que los tickets se guarden "
-        "con su propio espacio, sin usar la cuota de la cuenta técnica."
-    )
-    try:
-      configuracion_drive_oauth = GoogleDriveOAuthConfig.from_secrets(st.secrets)
-    except GoogleDriveOAuthConfigurationError:
-      st.info("La autorización de Drive se está preparando. No es necesaria ninguna acción todavía.")
-    else:
-      almacenamiento_seguro, error_supabase = diagnostico_supabase_para_administracion()
-      if not almacenamiento_seguro:
-        st.error(error_supabase)
-      else:
-        codigo_google = str(st.query_params.get("code", "")).strip()
-        estado_google = str(st.query_params.get("state", "")).strip()
-        error_google = str(st.query_params.get("error", "")).strip()
-        detalle_google = str(st.query_params.get("error_description", "")).strip()
-        if error_google:
-          # Google devuelve esta información en la URL de retorno. Se muestra
-          # sin credenciales y se limpia para que no rompa sesiones posteriores.
-          st.error(
-              "Google no completó la autorización. "
-              + (detalle_google[:300] if detalle_google else "Vuelve a iniciarla desde este panel.")
+        motivo_planificado = ""
+        if pausa_planificada:
+          motivo_planificado = st.text_input(
+              "Motivo de la pausa (opcional)",
+              value=str(ensayo_admin.get("motivo_pausa") or ""),
           )
-          st.query_params.clear()
-        if codigo_google or estado_google:
-          if not (codigo_google and estado_google):
-            st.error("Google no ha devuelto una autorización completa. Iníciala de nuevo.")
+        guardar_plan = st.form_submit_button("GUARDAR PLAN DEL ENSAYO")
+        if guardar_plan:
+          storage_plan = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+          if not usar_almacenamiento_supabase(storage_plan):
+            st.error("No se puede cambiar el plan mientras la base segura no esté disponible.")
           else:
             try:
-              permiso_cifrado = exchange_code_for_encrypted_token(
-                  configuracion_drive_oauth, codigo_google, estado_google
+              plan_guardado = storage_plan.actualizar_plan_ensayo(
+                  str(ensayo_admin["ciclo_id"]),
+                  ensayo_admin["lunes"],
+                  ubicacion_planificada,
+                  pausa_planificada,
+                  motivo_planificado,
+                  usuario_actual,
               )
-              credenciales_drive = credentials_from_encrypted_token(
-                  configuracion_drive_oauth, permiso_cifrado
-              )
-              # Antes de guardar el permiso se comprueba Drive y se crea la
-              # carpeta propia de SAFARA. Un permiso incompleto nunca queda activo.
-              preparacion_drive = GoogleSafaraStorage(
-                  GoogleStorageConfig.from_secrets(st.secrets),
-                  drive_credentials=credenciales_drive,
-              )
-              carpeta_id = preparacion_drive.crear_carpeta_justificantes_propietaria()
-              almacenamiento_seguro.guardar_autorizacion_google_drive(
-                  permiso_cifrado, carpeta_id, usuario_actual
-              )
-              reiniciar_almacenamiento_drive()
-              st.query_params.clear()
-              registrar_auditoria("google_drive_autorizado", usuario_actual)
-              actualizar_informes_y_copias_en_segundo_plano()
-              st.success("Google Drive ha quedado autorizado para guardar justificantes.")
-            except (GoogleDriveOAuthOperationError, SupabaseStorageOperationError) as error:
-              st.error(str(error))
-
-        try:
-          autorizacion_guardada = almacenamiento_seguro.obtener_autorizacion_google_drive()
-          drive_autorizado = bool(
-              autorizacion_guardada.get("token_cifrado")
-              and autorizacion_guardada.get("carpeta_id")
-          )
-        except SupabaseStorageOperationError:
-          drive_autorizado = False
-        if drive_autorizado:
-          st.success("Drive está autorizado y listo para guardar justificantes.")
-        else:
-          url_autorizacion = google_drive_authorization_url(
-              configuracion_drive_oauth, usuario_actual
-          )
-          st.markdown(
-              f'<a href="{escapar_html(url_autorizacion)}" target="_blank" rel="noopener noreferrer" '
-              'style="display:inline-block;background:#c62828;color:#ffffff;padding:10px 16px;'
-              'border-radius:8px;font-weight:700;text-decoration:none;">AUTORIZAR GOOGLE DRIVE</a>',
-              unsafe_allow_html=True,
-          )
-          st.caption(
-              "Se abrirá una pestaña segura: elige la cuenta propietaria de la carpeta de SAFARA. "
-              "Tu sesión de esta pestaña se conservará aunque la autorización falle o se cancele."
-          )
-
-        if drive_autorizado:
-          try:
-            justificantes_pendientes = almacenamiento_seguro.listar_justificantes_pendientes()
-          except SupabaseStorageOperationError:
-            justificantes_pendientes = []
-          if justificantes_pendientes:
-            st.warning(
-                f"Hay {len(justificantes_pendientes)} justificante(s) protegidos pendientes de Drive."
-            )
-            if st.button("REINTENTAR JUSTIFICANTES PENDIENTES"):
-              reintento_programado = reintentar_justificantes_pendientes_sin_interrumpir(
-                  almacenamiento_seguro
-              )
-              if reintento_programado:
-                st.success(
-                    "Reintento iniciado en segundo plano. Puedes continuar usando "
-                    "la aplicación mientras los justificantes se archivan."
-                )
+              if plan_guardado:
+                st.session_state.pop("_historial_ensayos_cache", None)
+                st.session_state.pop("_plan_ensayo_actual_cache", None)
+                registrar_auditoria("plan_ensayo_actualizado", usuario_actual)
+                st.success("Plan semanal actualizado. La siguiente semana continuará la alternancia correcta.")
+                st.rerun()
               else:
-                st.info("El reintento ya está en curso o Drive no está disponible todavía.")
-
-    st.markdown("---")
-    st.markdown("## Altas y permisos")
-    st.caption("Invitaciones y administración de accesos. Esta zona está separada de la operativa diaria.")
-    st.markdown("#### Crear código de alta")
-    st.caption(
-        "Cada código permite una sola alta y no se guarda en texto visible."
-    )
-    with st.form("form_crear_invitacion", clear_on_submit=True):
-      dias_invitacion = st.selectbox(
-          "Validez del código", [1, 7, 30], format_func=lambda days: f"{days} día(s)"
-      )
-      crear_codigo = st.form_submit_button("GENERAR CÓDIGO DE ALTA")
-      if crear_codigo:
-        codigo_nuevo = crear_invitacion(usuario_actual, dias_invitacion)
-        if codigo_nuevo:
-          st.session_state.ultimo_codigo_invitacion = codigo_nuevo
-          registrar_auditoria("invitacion_creada", usuario_actual, f"{dias_invitacion}d")
-        else:
-          st.error("No se ha podido guardar el código de alta.")
-
-    codigo_mostrado = st.session_state.get("ultimo_codigo_invitacion")
-    if codigo_mostrado:
-      st.success("Código creado. Cópialo y compártelo de forma privada.")
-      st.markdown(
-          f'<div class="codigo-alta-visible">{escapar_html(codigo_mostrado)}</div>',
-          unsafe_allow_html=True,
-      )
-      if st.button("Ocultar código", key="ocultar_codigo_invitacion"):
-        st.session_state.ultimo_codigo_invitacion = None
-        st.rerun()
-
-    st.markdown("---")
-    st.markdown("#### Gestionar personas administradoras")
-    personas_normales = [
-        nombre for nombre, datos in st.session_state.usuarios_registrados.items()
-        if datos.get("rol") == "usuario"
-    ]
-    if personas_normales:
-      with st.form("form_conceder_administracion"):
-        futuro_admin = st.selectbox(
-            "Persona a autorizar como administradora", personas_normales
-        )
-        confirmar_permiso = st.checkbox(
-            "Confirmo que esta persona debe acceder a Administración."
-        )
-        conceder_permiso = st.form_submit_button("AUTORIZAR ADMINISTRACIÓN")
-        if conceder_permiso:
-          if not confirmar_permiso:
-            st.warning("Confirma la autorización antes de continuar.")
-          else:
-            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-            try:
-              actualizado = (
-                  storage.actualizar_rol_usuario(futuro_admin, "admin", usuario_actual)
-                  if usar_almacenamiento_supabase(storage) else False
-              )
+                st.warning("Ese ensayo ya está cerrado y solo queda disponible en el historial.")
             except SupabaseStorageOperationError:
-              actualizado = False
-            if actualizado:
-              st.session_state.usuarios_registrados[futuro_admin]["rol"] = "admin"
-              invalidar_usuarios_compartidos()
-              st.success("Permiso concedido. Esa persona debe cerrar sesión y volver a entrar.")
-              st.rerun()
-            else:
-              st.error("No se ha podido conceder el permiso de administración.")
-    else:
-      st.info("No hay personas usuarias pendientes de autorización.")
+              st.error("No se ha podido actualizar el plan del ensayo.")
 
-    otros_admins = [
-        nombre for nombre, datos in st.session_state.usuarios_registrados.items()
-        if datos.get("rol") == "admin" and nombre != usuario_actual
-    ]
-    if otros_admins:
-      with st.form("form_retirar_administracion"):
-        admin_a_retirar = st.selectbox(
-            "Persona a devolver a usuario normal", otros_admins
-        )
-        confirmar_retirada = st.checkbox(
-            "Confirmo la retirada del acceso de Administración."
-        )
-        retirar_permiso = st.form_submit_button("RETIRAR ADMINISTRACIÓN")
-        if retirar_permiso:
-          if not confirmar_retirada:
-            st.warning("Confirma la retirada antes de continuar.")
-          else:
-            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-            try:
-              actualizado = (
-                  storage.actualizar_rol_usuario(admin_a_retirar, "usuario", usuario_actual)
-                  if usar_almacenamiento_supabase(storage) else False
-              )
-            except SupabaseStorageOperationError:
-              actualizado = False
-            if actualizado:
-              st.session_state.usuarios_registrados[admin_a_retirar]["rol"] = "usuario"
-              invalidar_usuarios_compartidos()
-              st.success("Acceso de Administración retirado.")
-              st.rerun()
-            else:
-              st.error("No se ha podido retirar el permiso de administración.")
-
-    st.markdown("---")
-    st.markdown("#### Sincronizar informes y copias")
-    st.caption("Actualiza la vista de consulta de Google sin ralentizar la entrada del grupo.")
-    if st.button("ACTUALIZAR INFORMES AHORA", key="sincronizar_informes_admin"):
-      if actualizar_informes_y_copias_en_segundo_plano():
-        st.success("Sincronización iniciada. Puedes seguir usando la aplicación.")
-      else:
-        st.info("No había cambios pendientes o Google no está disponible ahora mismo.")
-
-    st.markdown("---")
-
-    # GESTIÓN Y OPCIÓN DUAL: ANULAR O ELIMINAR ACTUACIONES
-    st.markdown("#### Gestionar / Anular / Eliminar Actuaciones")
-    if st.session_state.actuaciones:
-      opciones_bolos = {
-          f"#{a['id']} - {a['titulo']} ({a['fecha']}) [{a.get('estado', 'CONFIRMADA')}]": (
-              a["id"]
-          )
-          for a in st.session_state.actuaciones
-      }
-      bolo_sel_key = st.selectbox(
-          "Selecciona la actuación sobre la que deseas actuar:",
-          list(opciones_bolos.keys()),
-      )
-      id_sel = opciones_bolos[bolo_sel_key]
-
-      col_a1, col_a2 = st.columns(2)
-      with col_a1:
-        if st.button("🚫 Marcar como ANULADA"):
-          storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-          if usar_almacenamiento_supabase(storage):
-            try:
-              actualizado = storage.cambiar_estado_actuacion(id_sel, "ANULADA")
-            except SupabaseStorageOperationError:
-              actualizado = False
-            if not actualizado:
-              st.error("No se ha podido actualizar la actuación.")
-              st.stop()
-          sheet_col_target = None
-          for a in st.session_state.actuaciones:
-            if a["id"] == id_sel:
-              a["estado"] = "ANULADA"
-              sheet_col_target = a.get("sheet_col")
-              break
-          guardar_actuaciones_excel()
-          cambiar_estado_bolo_en_sheets(sheet_col_target, "ANULADA")
-          st.success(
-              "Actuación marcada como ANULADA (registrada en Drive sin"
-              " borrar)."
-          )
-          st.rerun()
-
-      with col_a2:
-        if st.button("🗑️ Eliminar Definitivamente"):
-          storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-          if usar_almacenamiento_supabase(storage):
-            try:
-              eliminado = storage.eliminar_actuacion(id_sel)
-            except SupabaseStorageOperationError:
-              eliminado = False
-            if not eliminado:
-              st.error("No se ha podido eliminar la actuación.")
-              st.stop()
-          sheet_col_target = None
-          for a in st.session_state.actuaciones:
-            if a["id"] == id_sel:
-              sheet_col_target = a.get("sheet_col")
-              break
-          st.session_state.actuaciones = [
-              a for a in st.session_state.actuaciones if a["id"] != id_sel
-          ]
-          guardar_actuaciones_excel()
-          eliminar_bolo_en_sheets(sheet_col_target)
-          st.success("Actuación eliminada totalmente del sistema y de Drive.")
-          st.rerun()
-    else:
-      st.info("No hay actuaciones actualmente registradas.")
-
-    st.markdown("---")
-
-    # --- GESTIÓN DE SALDO DE CAJA & FINANZAS ---
-    st.markdown("#### Ajustar Saldo de Caja & Finanzas")
-    render_ajuste_saldo_rapido(usuario_actual)
-
-    st.markdown("---")
-
-    # --- SUGERENCIAS SAFARERS ---
-    st.markdown("#### Sugerencias Safarers desde el Confesionario")
-    if st.session_state.confesionario_mensajes:
-      for idx, m_conf in enumerate(
-          reversed(st.session_state.confesionario_mensajes), 1
-      ):
-        st.markdown(
-            f"""
-                <div style="background: #12141a; border-left: 4px solid #E74C3C; border: 1px solid #2a2a2a; border-radius: 10px; padding: 12px; margin-bottom: 10px;">
-                    <div style="display: flex; justify-content: space-between; font-size: 11px; color: #E74C3C; font-weight: 700; margin-bottom: 4px;">
-                        <span>👤 {escapar_html(m_conf.get('usuario', 'Anónimo'))}</span>
-                        <span>📅 {escapar_html(m_conf.get('fecha', ''))}</span>
-                    </div>
-                    <div style="color: #FFFFFF; font-size: 13px; line-height: 1.4;">
-                        "{escapar_html(m_conf.get('mensaje', ''))}"
-                    </div>
-                </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-      st.info("No hay sugerencias registradas en el confesionario por ahora.")
-
-    st.markdown("---")
-
-    st.markdown("#### Listado Oficial de Socios Registrados")
-    if st.session_state.usuarios_registrados:
-      df_regs = pd.DataFrame.from_dict(
-          st.session_state.usuarios_registrados, orient="index"
-      ).drop(columns=["password_salt", "password_hash"], errors="ignore")
-      st.dataframe(df_regs, use_container_width=True)
-
-      csv_u = df_regs.reset_index().to_csv(index=False).encode("utf-8")
-      st.download_button(
-          label="📥 Descargar Registro de Socios (CSV)",
-          data=csv_u,
-          file_name=f"SAFARA_SOCIOS_{datetime.date.today()}.csv",
-          mime="text/csv",
+      st.caption(
+          "La puntuación se calcula automáticamente con los votos afirmativos: "
+          "1 punto por ensayo y 2 por actuación. No requiere validación manual."
       )
 
       st.markdown("---")
-      st.markdown("#### Depurar / Eliminar Usuarios Duplicados")
-      socios_lista = list(st.session_state.usuarios_registrados.keys())
-      socio_a_borrar = st.selectbox(
-          "Selecciona el usuario que quieras eliminar:", socios_lista
-      )
-
-      if st.button("Eliminar Socio Seleccionado"):
-        es_ultimo_admin = (
-            st.session_state.usuarios_registrados[socio_a_borrar].get("rol")
-            == "admin"
-            and sum(
-                user.get("rol") == "admin"
-                for user in st.session_state.usuarios_registrados.values()
-            ) == 1
+      # GESTIÓN Y OPCIÓN DUAL: ANULAR O ELIMINAR ACTUACIONES
+      st.markdown("#### Gestionar / Anular / Eliminar Actuaciones")
+      if st.session_state.actuaciones:
+        opciones_bolos = {
+            f"#{a['id']} - {a['titulo']} ({a['fecha']}) [{a.get('estado', 'CONFIRMADA')}]": (
+                a["id"]
+            )
+            for a in st.session_state.actuaciones
+        }
+        bolo_sel_key = st.selectbox(
+            "Selecciona la actuación sobre la que deseas actuar:",
+            list(opciones_bolos.keys()),
         )
-        if es_ultimo_admin:
-          st.error("No se puede eliminar a la última persona administradora.")
-        else:
-          usuario_eliminado = st.session_state.usuarios_registrados.pop(
-              socio_a_borrar
-          )
-          storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
-          if usar_almacenamiento_supabase(storage):
-            try:
-              usuario_guardado = storage.desactivar_usuario(socio_a_borrar)
-            except SupabaseStorageOperationError:
-              usuario_guardado = False
-          else:
-            usuario_guardado = guardar_usuarios_excel()
-          if usuario_guardado:
-            invalidar_usuarios_compartidos()
-            st.success(f"Usuario '{socio_a_borrar}' eliminado correctamente.")
-            st.rerun()
-          else:
-            st.session_state.usuarios_registrados[socio_a_borrar] = usuario_eliminado
-            st.error("No se ha podido guardar el cambio.")
-    else:
-      st.info("No hay socios registrados en el sistema.")
+        id_sel = opciones_bolos[bolo_sel_key]
 
-    st.markdown("---")
-    st.markdown("#### Confirmar Reembolso a Colaboradores")
-    pendientes_df = (
-        st.session_state.gastos[
-            st.session_state.gastos["Reembolsado"] == "PENDIENTE ABONO"
-        ]
-        if not st.session_state.gastos.empty
-        else pd.DataFrame()
-    )
-
-    if pendientes_df.empty:
-      st.info("No hay gastos pendientes de abono.")
-    else:
-      for idx, prow in pendientes_df.iterrows():
-        col_ab1, col_ab2 = st.columns([3, 1])
-        with col_ab1:
-          st.write(
-              f"**#{prow['ID']} - {prow['Usuario']}**:"
-              f" {formato_espanol(prow['Importe'])} € ({prow['Concepto']})"
-          )
-        with col_ab2:
-          if st.button("Marcar ABONADO", key=f"abonar_{prow['ID']}"):
-            estado_anterior = st.session_state.gastos.loc[
-                st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
-            ].copy()
-            st.session_state.gastos.loc[
-                st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
-            ] = "ABONADO"
+        col_a1, col_a2 = st.columns(2)
+        with col_a1:
+          if st.button("🚫 Marcar como ANULADA"):
             storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
             if usar_almacenamiento_supabase(storage):
               try:
-                gasto_guardado = storage.marcar_gasto_abonado(int(prow["ID"]), usuario_actual)
+                actualizado = storage.cambiar_estado_actuacion(id_sel, "ANULADA")
               except SupabaseStorageOperationError:
-                gasto_guardado = False
+                actualizado = False
+              if not actualizado:
+                st.error("No se ha podido actualizar la actuación.")
+                st.stop()
+            sheet_col_target = None
+            for a in st.session_state.actuaciones:
+              if a["id"] == id_sel:
+                a["estado"] = "ANULADA"
+                sheet_col_target = a.get("sheet_col")
+                break
+            guardar_actuaciones_excel()
+            cambiar_estado_bolo_en_sheets(sheet_col_target, "ANULADA")
+            st.success(
+                "Actuación marcada como ANULADA (registrada en Drive sin"
+                " borrar)."
+            )
+            st.rerun()
+
+        with col_a2:
+          if st.button("🗑️ Eliminar Definitivamente"):
+            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+            if usar_almacenamiento_supabase(storage):
+              try:
+                eliminado = storage.eliminar_actuacion(id_sel)
+              except SupabaseStorageOperationError:
+                eliminado = False
+              if not eliminado:
+                st.error("No se ha podido eliminar la actuación.")
+                st.stop()
+            sheet_col_target = None
+            for a in st.session_state.actuaciones:
+              if a["id"] == id_sel:
+                sheet_col_target = a.get("sheet_col")
+                break
+            st.session_state.actuaciones = [
+                a for a in st.session_state.actuaciones if a["id"] != id_sel
+            ]
+            guardar_actuaciones_excel()
+            eliminar_bolo_en_sheets(sheet_col_target)
+            st.success("Actuación eliminada totalmente del sistema y de Drive.")
+            st.rerun()
+      else:
+        st.info("No hay actuaciones actualmente registradas.")
+
+      st.markdown("---")
+
+    if seccion_admin == "Safarers":
+      st.markdown("## Altas y permisos")
+      st.caption("Invitaciones y administración de accesos. Esta zona está separada de la operativa diaria.")
+      st.markdown("#### Crear código de alta")
+      st.caption(
+          "Cada código permite una sola alta y no se guarda en texto visible."
+      )
+      with st.form("form_crear_invitacion", clear_on_submit=True):
+        dias_invitacion = st.selectbox(
+            "Validez del código", [1, 7, 30], format_func=lambda days: f"{days} día(s)"
+        )
+        crear_codigo = st.form_submit_button("GENERAR CÓDIGO DE ALTA")
+        if crear_codigo:
+          codigo_nuevo = crear_invitacion(usuario_actual, dias_invitacion)
+          if codigo_nuevo:
+            st.session_state.ultimo_codigo_invitacion = codigo_nuevo
+            registrar_auditoria("invitacion_creada", usuario_actual, f"{dias_invitacion}d")
+          else:
+            st.error("No se ha podido guardar el código de alta.")
+
+      codigo_mostrado = st.session_state.get("ultimo_codigo_invitacion")
+      if codigo_mostrado:
+        st.success("Código creado. Cópialo y compártelo de forma privada.")
+        st.markdown(
+            f'<div class="codigo-alta-visible">{escapar_html(codigo_mostrado)}</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Ocultar código", key="ocultar_codigo_invitacion"):
+          st.session_state.ultimo_codigo_invitacion = None
+          st.rerun()
+
+      st.markdown("---")
+      st.markdown("#### Gestionar personas administradoras")
+      personas_normales = [
+          nombre for nombre, datos in st.session_state.usuarios_registrados.items()
+          if datos.get("rol") == "usuario"
+      ]
+      if personas_normales:
+        with st.form("form_conceder_administracion"):
+          futuro_admin = st.selectbox(
+              "Persona a autorizar como administradora", personas_normales
+          )
+          confirmar_permiso = st.checkbox(
+              "Confirmo que esta persona debe acceder a Administración."
+          )
+          conceder_permiso = st.form_submit_button("AUTORIZAR ADMINISTRACIÓN")
+          if conceder_permiso:
+            if not confirmar_permiso:
+              st.warning("Confirma la autorización antes de continuar.")
             else:
-              gasto_guardado = guardar_gastos_persistentes()
-            if gasto_guardado:
-              st.session_state.pop("paquete_financiero", None)
-              actualizar_informes_y_copias_en_segundo_plano()
-              st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
+              storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+              try:
+                actualizado = (
+                    storage.actualizar_rol_usuario(futuro_admin, "admin", usuario_actual)
+                    if usar_almacenamiento_supabase(storage) else False
+                )
+              except SupabaseStorageOperationError:
+                actualizado = False
+              if actualizado:
+                st.session_state.usuarios_registrados[futuro_admin]["rol"] = "admin"
+                invalidar_usuarios_compartidos()
+                st.success("Permiso concedido. Esa persona debe cerrar sesión y volver a entrar.")
+                st.rerun()
+              else:
+                st.error("No se ha podido conceder el permiso de administración.")
+      else:
+        st.info("No hay personas usuarias pendientes de autorización.")
+
+      otros_admins = [
+          nombre for nombre, datos in st.session_state.usuarios_registrados.items()
+          if datos.get("rol") == "admin" and nombre != usuario_actual
+      ]
+      if otros_admins:
+        with st.form("form_retirar_administracion"):
+          admin_a_retirar = st.selectbox(
+              "Persona a devolver a usuario normal", otros_admins
+          )
+          confirmar_retirada = st.checkbox(
+              "Confirmo la retirada del acceso de Administración."
+          )
+          retirar_permiso = st.form_submit_button("RETIRAR ADMINISTRACIÓN")
+          if retirar_permiso:
+            if not confirmar_retirada:
+              st.warning("Confirma la retirada antes de continuar.")
+            else:
+              storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+              try:
+                actualizado = (
+                    storage.actualizar_rol_usuario(admin_a_retirar, "usuario", usuario_actual)
+                    if usar_almacenamiento_supabase(storage) else False
+                )
+              except SupabaseStorageOperationError:
+                actualizado = False
+              if actualizado:
+                st.session_state.usuarios_registrados[admin_a_retirar]["rol"] = "usuario"
+                invalidar_usuarios_compartidos()
+                st.success("Acceso de Administración retirado.")
+                st.rerun()
+              else:
+                st.error("No se ha podido retirar el permiso de administración.")
+
+      st.markdown("---")
+      # --- SUGERENCIAS SAFARERS ---
+      st.markdown("#### Sugerencias Safarers desde el Confesionario")
+      if st.session_state.confesionario_mensajes:
+        for idx, m_conf in enumerate(
+            reversed(st.session_state.confesionario_mensajes), 1
+        ):
+          st.markdown(
+              f"""
+                  <div style="background: #12141a; border-left: 4px solid #E74C3C; border: 1px solid #2a2a2a; border-radius: 10px; padding: 12px; margin-bottom: 10px;">
+                      <div style="display: flex; justify-content: space-between; font-size: 11px; color: #E74C3C; font-weight: 700; margin-bottom: 4px;">
+                          <span>👤 {escapar_html(m_conf.get('usuario', 'Anónimo'))}</span>
+                          <span>📅 {escapar_html(m_conf.get('fecha', ''))}</span>
+                      </div>
+                      <div style="color: #FFFFFF; font-size: 13px; line-height: 1.4;">
+                          "{escapar_html(m_conf.get('mensaje', ''))}"
+                      </div>
+                  </div>
+              """,
+              unsafe_allow_html=True,
+          )
+      else:
+        st.info("No hay sugerencias registradas en el confesionario por ahora.")
+
+      st.markdown("---")
+
+      st.markdown("#### Listado Oficial de Socios Registrados")
+      if st.session_state.usuarios_registrados:
+        df_regs = pd.DataFrame.from_dict(
+            st.session_state.usuarios_registrados, orient="index"
+        ).drop(columns=["password_salt", "password_hash"], errors="ignore")
+        st.dataframe(df_regs, use_container_width=True)
+
+        csv_u = df_regs.reset_index().to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Descargar Registro de Socios (CSV)",
+            data=csv_u,
+            file_name=f"SAFARA_SOCIOS_{datetime.date.today()}.csv",
+            mime="text/csv",
+        )
+
+        st.markdown("---")
+        st.markdown("#### Depurar / Eliminar Usuarios Duplicados")
+        socios_lista = list(st.session_state.usuarios_registrados.keys())
+        socio_a_borrar = st.selectbox(
+            "Selecciona el usuario que quieras eliminar:", socios_lista
+        )
+
+        if st.button("Eliminar Socio Seleccionado"):
+          es_ultimo_admin = (
+              st.session_state.usuarios_registrados[socio_a_borrar].get("rol")
+              == "admin"
+              and sum(
+                  user.get("rol") == "admin"
+                  for user in st.session_state.usuarios_registrados.values()
+              ) == 1
+          )
+          if es_ultimo_admin:
+            st.error("No se puede eliminar a la última persona administradora.")
+          else:
+            usuario_eliminado = st.session_state.usuarios_registrados.pop(
+                socio_a_borrar
+            )
+            storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+            if usar_almacenamiento_supabase(storage):
+              try:
+                usuario_guardado = storage.desactivar_usuario(socio_a_borrar)
+              except SupabaseStorageOperationError:
+                usuario_guardado = False
+            else:
+              usuario_guardado = guardar_usuarios_excel()
+            if usuario_guardado:
+              invalidar_usuarios_compartidos()
+              st.success(f"Usuario '{socio_a_borrar}' eliminado correctamente.")
               st.rerun()
             else:
+              st.session_state.usuarios_registrados[socio_a_borrar] = usuario_eliminado
+              st.error("No se ha podido guardar el cambio.")
+      else:
+        st.info("No hay socios registrados en el sistema.")
+
+      st.markdown("---")
+    if seccion_admin == "Control":
+      # Estado breve y seguro: ayuda a comprobar el circuito completo sin
+      # mostrar URLs privadas, tokens ni mensajes técnicos del proveedor.
+      try:
+        estado_seguro, _ = diagnostico_supabase_para_administracion()
+        obtener_estado_google = getattr(estado_seguro, "estado_mantenimiento_google", None)
+        estado_google = obtener_estado_google() if callable(obtener_estado_google) else {}
+      except (AttributeError, SupabaseStorageOperationError):
+        estado_google = {}
+      if estado_google:
+        informes_pendientes = (
+            int(estado_google.get("sheets_revision", 0))
+            != int(estado_google.get("sheets_synced_revision", 0))
+        )
+        if st.checkbox("Ver estado de seguridad y copias", key="mostrar_estado_control"):
+          st.caption(
+              "Resumen interno: comprueba que la base segura, los informes y las "
+              "copias de tickets funcionan sin mostrar datos privados."
+          )
+          columnas_estado = st.columns(3)
+          columnas_estado[0].metric("Base segura", "ACTIVA")
+          columnas_estado[1].metric(
+              "Informes Google", "PENDIENTES" if informes_pendientes else "ACTUALIZADOS"
+          )
+          columnas_estado[2].metric(
+              "Copia Drive", "PENDIENTE" if estado_google.get("ultimo_error") else "AL DÍA"
+          )
+
+      st.markdown("#### Autorizar justificantes en Google Drive")
+      st.caption(
+          "Conecta una sola vez el Drive de SAFARA para que los tickets se guarden "
+          "con su propio espacio, sin usar la cuota de la cuenta técnica."
+      )
+      try:
+        configuracion_drive_oauth = GoogleDriveOAuthConfig.from_secrets(st.secrets)
+      except GoogleDriveOAuthConfigurationError:
+        st.info("La autorización de Drive se está preparando. No es necesaria ninguna acción todavía.")
+      else:
+        almacenamiento_seguro, error_supabase = diagnostico_supabase_para_administracion()
+        if not almacenamiento_seguro:
+          st.error(error_supabase)
+        else:
+          codigo_google = str(st.query_params.get("code", "")).strip()
+          estado_google = str(st.query_params.get("state", "")).strip()
+          error_google = str(st.query_params.get("error", "")).strip()
+          detalle_google = str(st.query_params.get("error_description", "")).strip()
+          if error_google:
+            # Google devuelve esta información en la URL de retorno. Se muestra
+            # sin credenciales y se limpia para que no rompa sesiones posteriores.
+            st.error(
+                "Google no completó la autorización. "
+                + (detalle_google[:300] if detalle_google else "Vuelve a iniciarla desde este panel.")
+            )
+            st.query_params.clear()
+          if codigo_google or estado_google:
+            if not (codigo_google and estado_google):
+              st.error("Google no ha devuelto una autorización completa. Iníciala de nuevo.")
+            else:
+              try:
+                permiso_cifrado = exchange_code_for_encrypted_token(
+                    configuracion_drive_oauth, codigo_google, estado_google
+                )
+                credenciales_drive = credentials_from_encrypted_token(
+                    configuracion_drive_oauth, permiso_cifrado
+                )
+                # Antes de guardar el permiso se comprueba Drive y se crea la
+                # carpeta propia de SAFARA. Un permiso incompleto nunca queda activo.
+                preparacion_drive = GoogleSafaraStorage(
+                    GoogleStorageConfig.from_secrets(st.secrets),
+                    drive_credentials=credenciales_drive,
+                )
+                carpeta_id = preparacion_drive.crear_carpeta_justificantes_propietaria()
+                almacenamiento_seguro.guardar_autorizacion_google_drive(
+                    permiso_cifrado, carpeta_id, usuario_actual
+                )
+                reiniciar_almacenamiento_drive()
+                st.query_params.clear()
+                registrar_auditoria("google_drive_autorizado", usuario_actual)
+                actualizar_informes_y_copias_en_segundo_plano()
+                st.success("Google Drive ha quedado autorizado para guardar justificantes.")
+              except (GoogleDriveOAuthOperationError, SupabaseStorageOperationError) as error:
+                st.error(str(error))
+
+          try:
+            autorizacion_guardada = almacenamiento_seguro.obtener_autorizacion_google_drive()
+            drive_autorizado = bool(
+                autorizacion_guardada.get("token_cifrado")
+                and autorizacion_guardada.get("carpeta_id")
+            )
+          except SupabaseStorageOperationError:
+            drive_autorizado = False
+          if drive_autorizado:
+            st.success("Drive está autorizado y listo para guardar justificantes.")
+          else:
+            url_autorizacion = google_drive_authorization_url(
+                configuracion_drive_oauth, usuario_actual
+            )
+            st.markdown(
+                f'<a href="{escapar_html(url_autorizacion)}" target="_blank" rel="noopener noreferrer" '
+                'style="display:inline-block;background:#c62828;color:#ffffff;padding:10px 16px;'
+                'border-radius:8px;font-weight:700;text-decoration:none;">AUTORIZAR GOOGLE DRIVE</a>',
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                "Se abrirá una pestaña segura: elige la cuenta propietaria de la carpeta de SAFARA. "
+                "Tu sesión de esta pestaña se conservará aunque la autorización falle o se cancele."
+            )
+
+          if drive_autorizado:
+            try:
+              justificantes_pendientes = almacenamiento_seguro.listar_justificantes_pendientes()
+            except SupabaseStorageOperationError:
+              justificantes_pendientes = []
+            if justificantes_pendientes:
+              st.warning(
+                  f"Hay {len(justificantes_pendientes)} justificante(s) protegidos pendientes de Drive."
+              )
+              if st.button("REINTENTAR JUSTIFICANTES PENDIENTES"):
+                reintento_programado = reintentar_justificantes_pendientes_sin_interrumpir(
+                    almacenamiento_seguro
+                )
+                if reintento_programado:
+                  st.success(
+                      "Reintento iniciado en segundo plano. Puedes continuar usando "
+                      "la aplicación mientras los justificantes se archivan."
+                  )
+                else:
+                  st.info("El reintento ya está en curso o Drive no está disponible todavía.")
+
+      st.markdown("---")
+      st.markdown("#### Sincronizar informes y copias")
+      st.caption("Actualiza la vista de consulta de Google sin ralentizar la entrada del grupo.")
+      if st.button("ACTUALIZAR INFORMES AHORA", key="sincronizar_informes_admin"):
+        if actualizar_informes_y_copias_en_segundo_plano():
+          st.success("Sincronización iniciada. Puedes seguir usando la aplicación.")
+        else:
+          st.info("No había cambios pendientes o Google no está disponible ahora mismo.")
+
+      st.markdown("---")
+
+      # --- GESTIÓN DE SALDO DE CAJA & FINANZAS ---
+      st.markdown("#### Ajustar Saldo de Caja & Finanzas")
+      render_ajuste_saldo_rapido(usuario_actual)
+
+      st.markdown("---")
+
+      st.markdown("#### Confirmar Reembolso a Colaboradores")
+      pendientes_df = (
+          st.session_state.gastos[
+              st.session_state.gastos["Reembolsado"] == "PENDIENTE ABONO"
+          ]
+          if not st.session_state.gastos.empty
+          else pd.DataFrame()
+      )
+
+      if pendientes_df.empty:
+        st.info("No hay gastos pendientes de abono.")
+      else:
+        for idx, prow in pendientes_df.iterrows():
+          col_ab1, col_ab2 = st.columns([3, 1])
+          with col_ab1:
+            st.write(
+                f"**#{prow['ID']} - {prow['Usuario']}**:"
+                f" {formato_espanol(prow['Importe'])} € ({prow['Concepto']})"
+            )
+          with col_ab2:
+            if st.button("Marcar ABONADO", key=f"abonar_{prow['ID']}"):
+              estado_anterior = st.session_state.gastos.loc[
+                  st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
+              ].copy()
               st.session_state.gastos.loc[
                   st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
-              ] = estado_anterior
-              st.error("No se ha podido actualizar el reembolso.")
+              ] = "ABONADO"
+              storage = obtener_almacenamiento_google() if usar_almacenamiento_google() else None
+              if usar_almacenamiento_supabase(storage):
+                try:
+                  gasto_guardado = storage.marcar_gasto_abonado(int(prow["ID"]), usuario_actual)
+                except SupabaseStorageOperationError:
+                  gasto_guardado = False
+              else:
+                gasto_guardado = guardar_gastos_persistentes()
+              if gasto_guardado:
+                st.session_state.pop("paquete_financiero", None)
+                actualizar_informes_y_copias_en_segundo_plano()
+                st.success(f"Gasto #{prow['ID']} marcado como ABONADO")
+                st.rerun()
+              else:
+                st.session_state.gastos.loc[
+                    st.session_state.gastos["ID"] == prow["ID"], "Reembolsado"
+                ] = estado_anterior
+                st.error("No se ha podido actualizar el reembolso.")
 
-    st.divider()
+      st.divider()
 
-    st.markdown("#### Archivo financiero descargable")
-    st.caption(
-        "Genera una copia actual de gastos, caja y actuaciones. Cada gasto conserva "
-        "su enlace al justificante original protegido en Google Drive."
-    )
-    if st.button("PREPARAR ARCHIVO FINANCIERO", key="preparar_archivo_financiero"):
-      almacenamiento_exportacion, error_exportacion = diagnostico_supabase_para_administracion()
-      if not almacenamiento_exportacion:
-        st.error(error_exportacion or "No se puede preparar el archivo ahora mismo.")
-      else:
-        try:
-          with st.spinner("Preparando la versión actualizada..."):
-            paquete = crear_paquete_financiero_descargable(
-                almacenamiento_exportacion.obtener_archivo_financiero()
-            )
-          st.session_state.paquete_financiero = {
-              "contenido": paquete,
-              "nombre": (
-                  f"SAFARA_Archivo_Financiero_{datetime.date.today().isoformat()}.zip"
-              ),
-              "generado_en": datetime.datetime.now(
-                  ZoneInfo("Europe/Madrid")
-              ).strftime("%d/%m/%Y %H:%M"),
-          }
-          registrar_auditoria("archivo_financiero_preparado", usuario_actual)
-          st.success("Archivo preparado con datos actuales.")
-        except SupabaseStorageOperationError:
-          st.error("No se ha podido leer la base segura para preparar el archivo.")
-
-    paquete_financiero = st.session_state.get("paquete_financiero")
-    if paquete_financiero:
+      st.markdown("#### Archivo financiero descargable")
       st.caption(
-          f"Versión preparada el {paquete_financiero['generado_en']}. "
-          "Vuelve a prepararla antes de descargar si ha habido cambios."
+          "Genera una copia actual de gastos, caja y actuaciones. Cada gasto conserva "
+          "su enlace al justificante original protegido en Google Drive."
       )
-      with st.container(key="financial-download"):
-        st.download_button(
-            label="DESCARGAR ARCHIVO FINANCIERO (ZIP)",
-            data=paquete_financiero["contenido"],
-            file_name=paquete_financiero["nombre"],
-            mime="application/zip",
-            key="descargar_archivo_financiero",
-            use_container_width=True,
+      if st.button("PREPARAR ARCHIVO FINANCIERO", key="preparar_archivo_financiero"):
+        almacenamiento_exportacion, error_exportacion = diagnostico_supabase_para_administracion()
+        if not almacenamiento_exportacion:
+          st.error(error_exportacion or "No se puede preparar el archivo ahora mismo.")
+        else:
+          try:
+            with st.spinner("Preparando la versión actualizada..."):
+              paquete = crear_paquete_financiero_descargable(
+                  almacenamiento_exportacion.obtener_archivo_financiero()
+              )
+            st.session_state.paquete_financiero = {
+                "contenido": paquete,
+                "nombre": (
+                    f"SAFARA_Archivo_Financiero_{datetime.date.today().isoformat()}.zip"
+                ),
+                "generado_en": datetime.datetime.now(
+                    ZoneInfo("Europe/Madrid")
+                ).strftime("%d/%m/%Y %H:%M"),
+            }
+            registrar_auditoria("archivo_financiero_preparado", usuario_actual)
+            st.success("Archivo preparado con datos actuales.")
+          except SupabaseStorageOperationError:
+            st.error("No se ha podido leer la base segura para preparar el archivo.")
+
+      paquete_financiero = st.session_state.get("paquete_financiero")
+      if paquete_financiero:
+        st.caption(
+            f"Versión preparada el {paquete_financiero['generado_en']}. "
+            "Vuelve a prepararla antes de descargar si ha habido cambios."
         )
+        with st.container(key="financial-download"):
+          st.download_button(
+              label="DESCARGAR ARCHIVO FINANCIERO (ZIP)",
+              data=paquete_financiero["contenido"],
+              file_name=paquete_financiero["nombre"],
+              mime="application/zip",
+              key="descargar_archivo_financiero",
+              use_container_width=True,
+          )
 
 st.divider()
 

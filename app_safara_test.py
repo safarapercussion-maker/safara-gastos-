@@ -323,15 +323,8 @@ st.markdown(
         color: #FF6659 !important;
         -webkit-text-fill-color: #FF6659 !important;
     }}
-    div[class*="st-key-area_administracion"] [role="group"] {{
-        display: flex !important;
+    div[class*="st-key-admin_tab_"] button {{
         width: 100% !important;
-        gap: 6px !important;
-        background: transparent !important;
-    }}
-    div[class*="st-key-area_administracion"] button {{
-        flex: 1 1 0 !important;
-        min-width: 0 !important;
         min-height: 44px !important;
         background: #1B2028 !important;
         border: 1px solid #6F7D8D !important;
@@ -341,41 +334,43 @@ st.markdown(
         font-size: 0.88rem !important;
         font-weight: 700 !important;
     }}
-    div[class*="st-key-area_administracion"] button * {{
-        color: inherit !important;
-        -webkit-text-fill-color: inherit !important;
+    div[class*="st-key-admin_tab_"] button p {{
+        color: #E1E7EF !important;
+        -webkit-text-fill-color: #E1E7EF !important;
     }}
-    div[class*="st-key-area_administracion"] button[aria-pressed="true"],
-    div[class*="st-key-area_administracion"] button[aria-checked="true"] {{
+    div[class*="st-key-admin_tab_"] button[kind="primary"] {{
         background: #84221F !important;
         border: 2px solid #FF6659 !important;
         color: #FFF4F2 !important;
         -webkit-text-fill-color: #FFF4F2 !important;
         box-shadow: 0 0 0 1px rgba(255,102,89,.2) !important;
     }}
+    div[class*="st-key-admin_tab_"] button[kind="primary"] p {{
+        color: #FFF4F2 !important;
+        -webkit-text-fill-color: #FFF4F2 !important;
+    }}
 
     .instrument-heading {{
-        color: #E1E7EF;
-        font-size: 0.9rem;
-        font-weight: 800;
-        margin: 8px 0;
+        color: #C9D3DF;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin: 10px 0 3px;
     }}
-    .instrument-grid {{
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
-        gap: 8px;
-        margin: 0 0 14px;
+    .instrument-summary {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px 12px;
+        margin: 0 0 12px;
     }}
-    .instrument-card {{
-        background: rgba(20,24,30,.88);
-        border: 1px solid #596575;
-        border-radius: 10px;
-        padding: 9px;
-        min-width: 0;
+    .instrument-item {{
+        color: #BFC9D6;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
     }}
-    .instrument-title {{ color: #E1E7EF; font-size: .8rem; font-weight: 700; }}
-    .instrument-title strong {{ color: #67EE80; font-size: 1rem; }}
-    .instrument-names {{ color: #C9D3DF; font-size: .76rem; overflow-wrap: anywhere; }}
+    .instrument-item strong {{ color: #DCE4EE; font-weight: 600; }}
+    .instrument-item b {{ color: #8BCF9A; font-weight: 700; }}
+    .instrument-item-empty, .instrument-item-empty strong {{ color: #AAB5C2; }}
     .safara-web-card {{
         display: block;
         background: linear-gradient(115deg, #321513, #161A22);
@@ -1457,18 +1452,17 @@ def mostrar_confirmados_por_instrumento(confirmados):
   grupos = agrupar_por_instrumento(
       confirmados, st.session_state.usuarios_registrados
   )
-  tarjetas = []
+  elementos = []
   for instrumento, personas in grupos.items():
-    nombres = ", ".join(escapar_html(persona) for persona in personas) or "Aún nadie"
-    tarjetas.append(
-        '<div class="instrument-card">'
-        f'<div class="instrument-title">{escapar_html(instrumento)} '
-        f'<strong>{len(personas)}</strong></div>'
-        f'<div class="instrument-names">{nombres}</div></div>'
+    nombres = ", ".join(escapar_html(persona) for persona in personas)
+    clase = "instrument-item" if personas else "instrument-item instrument-item-empty"
+    elementos.append(
+        f'<span class="{clase}"><strong>{escapar_html(instrumento)}</strong> '
+        f'<b>{len(personas)}</b>{" · " + nombres if nombres else ""}</span>'
     )
   st.markdown(
       '<div class="instrument-heading">Confirmaciones por instrumento</div>'
-      '<div class="instrument-grid">' + "".join(tarjetas) + '</div>',
+      '<div class="instrument-summary">' + "".join(elementos) + '</div>',
       unsafe_allow_html=True,
   )
 
@@ -3329,16 +3323,23 @@ if seccion_activa == "Administración":
   else:
     st.success("Acceso de Administración Autorizado")
 
-    def conservar_area_administracion():
-      # Streamlit 1.51 permite deseleccionar un segmento; conservamos una vista.
-      if st.session_state.get("area_administracion") is None:
-        st.session_state.area_administracion = "Actividad"
+    def seleccionar_area_administracion(area):
+      st.session_state.area_administracion = area
 
-    seccion_admin = st.segmented_control(
-        "Área de Administración", ["Actividad", "Safarers", "Control"],
-        default="Actividad", key="area_administracion",
-        on_change=conservar_area_administracion, label_visibility="collapsed",
-    )
+    if st.session_state.get("area_administracion") not in ("Actividad", "Safarers", "Control"):
+      st.session_state.area_administracion = "Actividad"
+    for columna, area, clave in zip(
+        st.columns(3, gap="small"),
+        ("Actividad", "Safarers", "Control"),
+        ("actividad", "safarers", "control"),
+    ):
+      with columna:
+        st.button(
+            area, key=f"admin_tab_{clave}", use_container_width=True,
+            type="primary" if st.session_state.area_administracion == area else "secondary",
+            on_click=seleccionar_area_administracion, args=(area,),
+        )
+    seccion_admin = st.session_state.area_administracion
     if seccion_admin == "Actividad":
       # Acción operativa principal: debe quedar visible antes de la gestión interna.
       render_lanzador_bolo_prioritario(usuario_actual)

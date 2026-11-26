@@ -55,6 +55,7 @@ from safara_supabase_storage import (
     is_enabled as supabase_storage_enabled,
 )
 from safara_maintenance import crear_paquete_financiero_descargable, run_google_maintenance
+from safara_poll_display import agrupar_por_instrumento
 from safara_ensayos import (
     QUORUM_ENSAYO_MINIMO,
     ciclos_que_deben_cerrarse,
@@ -303,25 +304,114 @@ st.markdown(
         padding-top: 0 !important;
         margin-bottom: 2px !important;
     }}
-    div[data-testid="stWidgetLabel"] p,
-    div[data-testid="stCaptionContainer"] p,
-    div[data-testid="stTabs"] button[role="tab"] p,
-    div[data-testid="stMetricLabel"] p {{
-        color: #CFD5DE !important;
-        -webkit-text-fill-color: #CFD5DE !important;
+    [data-testid="stWidgetLabel"],
+    [data-testid="stWidgetLabel"] *,
+    [data-testid="stCaptionContainer"],
+    [data-testid="stCaptionContainer"] *,
+    [data-testid="stMetricLabel"] *,
+    [data-testid="stFileUploader"] label,
+    [data-testid="stFileUploader"] label * {{
+        color: #D7DFE9 !important;
+        -webkit-text-fill-color: #D7DFE9 !important;
+    }}
+    div[data-testid="stTabs"] button[role="tab"],
+    div[data-testid="stTabs"] button[role="tab"] * {{
+        color: #D7DFE9 !important;
+        -webkit-text-fill-color: #D7DFE9 !important;
     }}
     div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] p {{
         color: #FF6659 !important;
         -webkit-text-fill-color: #FF6659 !important;
     }}
-    div[class*="st-key-area_administracion"] button p {{
-        color: #CFD5DE !important;
-        -webkit-text-fill-color: #CFD5DE !important;
+    div[class*="st-key-area_administracion"] [role="group"] {{
+        display: flex !important;
+        width: 100% !important;
+        gap: 6px !important;
+        background: transparent !important;
     }}
-    div[class*="st-key-area_administracion"] button[aria-pressed="true"] p {{
-        color: #FFFFFF !important;
-        -webkit-text-fill-color: #FFFFFF !important;
+    div[class*="st-key-area_administracion"] button {{
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        min-height: 44px !important;
+        background: #1B2028 !important;
+        border: 1px solid #6F7D8D !important;
+        border-radius: 8px !important;
+        color: #E1E7EF !important;
+        -webkit-text-fill-color: #E1E7EF !important;
+        font-size: 0.88rem !important;
+        font-weight: 700 !important;
     }}
+    div[class*="st-key-area_administracion"] button * {{
+        color: inherit !important;
+        -webkit-text-fill-color: inherit !important;
+    }}
+    div[class*="st-key-area_administracion"] button[aria-pressed="true"],
+    div[class*="st-key-area_administracion"] button[aria-checked="true"] {{
+        background: #84221F !important;
+        border: 2px solid #FF6659 !important;
+        color: #FFF4F2 !important;
+        -webkit-text-fill-color: #FFF4F2 !important;
+        box-shadow: 0 0 0 1px rgba(255,102,89,.2) !important;
+    }}
+
+    .instrument-heading {{
+        color: #E1E7EF;
+        font-size: 0.9rem;
+        font-weight: 800;
+        margin: 8px 0;
+    }}
+    .instrument-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+        gap: 8px;
+        margin: 0 0 14px;
+    }}
+    .instrument-card {{
+        background: rgba(20,24,30,.88);
+        border: 1px solid #596575;
+        border-radius: 10px;
+        padding: 9px;
+        min-width: 0;
+    }}
+    .instrument-title {{ color: #E1E7EF; font-size: .8rem; font-weight: 700; }}
+    .instrument-title strong {{ color: #67EE80; font-size: 1rem; }}
+    .instrument-names {{ color: #C9D3DF; font-size: .76rem; overflow-wrap: anywhere; }}
+    .safara-web-card {{
+        display: block;
+        background: linear-gradient(115deg, #321513, #161A22);
+        border: 2px solid #FF6659;
+        border-radius: 14px;
+        color: #E8EDF4 !important;
+        margin: 14px 0;
+        padding: 16px;
+        text-align: center;
+        text-decoration: none !important;
+        box-shadow: 0 5px 18px rgba(0,0,0,.35);
+    }}
+    .safara-web-card strong {{
+        display: block;
+        color: #FFF4F2;
+        font-size: 1.12rem;
+        overflow-wrap: anywhere;
+    }}
+    .safara-web-card span {{ color: #D7DFE9; font-size: .84rem; }}
+    .safara-social-card {{
+        display: block;
+        background: #151A22;
+        border: 1px solid #A6504A;
+        border-radius: 12px;
+        overflow: hidden;
+        text-align: center;
+        text-decoration: none !important;
+    }}
+    .safara-social-card img {{
+        display: block;
+        width: 100%;
+        height: 145px;
+        object-fit: cover;
+    }}
+    .safara-social-card strong {{ display: block; color: #E8EDF4; padding: 9px 5px 2px; }}
+    .safara-social-card span {{ display: block; color: #D7DFE9; font-size: .8rem; padding: 0 5px 12px; }}
 
     div[data-baseweb="select"] > div {{
         background-color: #121212 !important;
@@ -1363,6 +1453,26 @@ def obtener_todos_votos_encuesta(encuesta_id):
   ]
 
 
+def mostrar_confirmados_por_instrumento(confirmados):
+  grupos = agrupar_por_instrumento(
+      confirmados, st.session_state.usuarios_registrados
+  )
+  tarjetas = []
+  for instrumento, personas in grupos.items():
+    nombres = ", ".join(escapar_html(persona) for persona in personas) or "Aún nadie"
+    tarjetas.append(
+        '<div class="instrument-card">'
+        f'<div class="instrument-title">{escapar_html(instrumento)} '
+        f'<strong>{len(personas)}</strong></div>'
+        f'<div class="instrument-names">{nombres}</div></div>'
+    )
+  st.markdown(
+      '<div class="instrument-heading">Confirmaciones por instrumento</div>'
+      '<div class="instrument-grid">' + "".join(tarjetas) + '</div>',
+      unsafe_allow_html=True,
+  )
+
+
 @st.fragment(run_every="15s")
 def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
   """Dos logos táctiles reales para votar, sin controles duplicados."""
@@ -1413,26 +1523,16 @@ def render_control_encuesta_en_vivo(encuesta_id, usuario_id, clave):
     st.caption(f"🟢 {confirmados} Safarers confirmados para cena")
   elif str(encuesta_id).startswith("bolo_"):
     st.caption(f"🟢 {confirmados} Safarers confirmados para este bolo")
-    st.markdown("**Personas apuntadas por instrumento**")
-    por_instrumento = {}
-    if not df_votos.empty:
-      for nombre_confirmado in df_votos[df_votos["respuesta"] == "SI"]["usuario_id"]:
-        instrumento = str(
-            st.session_state.usuarios_registrados.get(nombre_confirmado, {}).get(
-                "instrumento") or "Sin instrumento asignado"
-        )
-        por_instrumento.setdefault(instrumento, []).append(str(nombre_confirmado))
-    if por_instrumento:
-      for instrumento, personas in sorted(por_instrumento.items()):
-        st.markdown(
-            f"**{escapar_html(instrumento)} ({len(personas)}):** "
-            + ", ".join(escapar_html(persona) for persona in sorted(personas)),
-            unsafe_allow_html=True,
-        )
-    else:
-      st.caption("Todavía no hay personas apuntadas a este bolo.")
+    mostrar_confirmados_por_instrumento(
+        df_votos[df_votos["respuesta"] == "SI"]["usuario_id"]
+        if not df_votos.empty else []
+    )
   else:
     st.caption(f"🟢 {confirmados} Safarers confirmados para el ensayo")
+    mostrar_confirmados_por_instrumento(
+        df_votos[df_votos["respuesta"] == "SI"]["usuario_id"]
+        if not df_votos.empty else []
+    )
 
 
 def sincronizar_historial_ensayos():
@@ -2691,14 +2791,6 @@ if seccion_activa == "Nuestras Movidas":
   else:
     st.info("La encuesta semanal está cerrada. El resultado queda guardado en el historial y la siguiente se abrirá el lunes a las 08:00.")
 
-  if confirmados_list:
-    st.caption(
-        f"Repenikes: {counts['Repenike']} | Cajas: {counts['Caja']} |"
-        f" Surdos: {counts['Surdo']} | Surdos de contra:"
-        f" {counts['Surdo de contra']} | Bailarinas:"
-        f" {counts['Ganza (bailarinas)']}"
-    )
-
   if st.button("Consultar historial de ensayos", key="consultar_historial_ensayos"):
     historial_ensayos = sincronizar_historial_ensayos()
     if historial_ensayos:
@@ -2810,15 +2902,22 @@ if seccion_activa == "Nuestras Movidas":
       "<h4 style='color: #E74C3C;'>Safara en Redes Sociales</h4>",
       unsafe_allow_html=True,
   )
+  st.markdown(
+      '<a class="safara-web-card" href="https://safarapercussion.com/" '
+      'target="_blank" rel="noopener noreferrer">'
+      '<strong>🌐 Visita la web de SAFARA</strong>'
+      '<span>safarapercussion.com · Actuaciones, fotos y contacto</span></a>',
+      unsafe_allow_html=True,
+  )
 
   r_col1, r_col2 = st.columns(2)
   with r_col1:
     st.markdown(
         """
-            <a href="https://www.instagram.com/safarapercussion?srtk=Ym9jYTB0eWF2cjQz" target="_blank" rel="noopener noreferrer" style="display:block; background:#12141a; border:1px solid #E74C3C; border-radius:12px; overflow:hidden; text-align:center; text-decoration:none;">
-                <img src="https://safarapercussion.com/wp-content/uploads/2024/04/img_7410.jpeg" alt="Safara Percussion destacado en Instagram" style="display:block; width:100%; height:142px; object-fit:cover;" loading="lazy">
-                <span style="display:block; color:#FFFFFF; font-weight:800; padding:10px 8px 3px;">Instagram Oficial</span>
-                <span style="display:block; color:#FF6AA6; font-size:12px; font-weight:700; padding:0 8px 12px;">Ver contenido destacado</span>
+            <a class="safara-social-card" href="https://www.instagram.com/safarapercussion/" target="_blank" rel="noopener noreferrer">
+                <img src="https://safarapercussion.com/wp-content/uploads/2024/04/img_7410.jpeg" alt="Safara Percussion en Instagram" loading="lazy">
+                <strong>Instagram Oficial</strong>
+                <span>▶ Descubre nuestros momentos</span>
             </a>
         """,
         unsafe_allow_html=True,
@@ -2827,23 +2926,14 @@ if seccion_activa == "Nuestras Movidas":
   with r_col2:
     st.markdown(
         """
-            <a href="https://www.tiktok.com/@safarapercussion?_r=1&_t=ZN-9ASh8h0A2Le" target="_blank" rel="noopener noreferrer" style="display:block; background:#12141a; border:1px solid #E74C3C; border-radius:12px; overflow:hidden; text-align:center; text-decoration:none;">
-                <img src="https://safarapercussion.com/wp-content/uploads/2024/04/img_8808-2.jpg" alt="Safara Percussion destacado en TikTok" style="display:block; width:100%; height:142px; object-fit:cover;" loading="lazy">
-                <span style="display:block; color:#FFFFFF; font-weight:800; padding:10px 8px 3px;">TikTok Oficial</span>
-                <span style="display:block; color:#FFFFFF; font-size:12px; font-weight:700; padding:0 8px 12px;">Ver contenido destacado</span>
+            <a class="safara-social-card" href="https://www.tiktok.com/@safarapercussion" target="_blank" rel="noopener noreferrer">
+                <img src="https://safarapercussion.com/wp-content/uploads/2024/04/img_8808-2.jpg" alt="Safara Percussion en TikTok" loading="lazy">
+                <strong>TikTok Oficial</strong>
+                <span>▶ Mira nuestros vídeos</span>
             </a>
         """,
         unsafe_allow_html=True,
     )
-
-  st.markdown(
-      """
-        <p style="text-align:center; margin:14px 0 0;">
-          <a href="https://safarapercussion.com/" target="_blank" rel="noopener noreferrer" style="color:#FFD166; font-weight:800; text-decoration:none;">🌐 safarapercussion.com</a>
-        </p>
-      """,
-      unsafe_allow_html=True,
-  )
 
   st.markdown("---")
 

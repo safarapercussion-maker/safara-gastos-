@@ -56,6 +56,11 @@ from safara_supabase_storage import (
 )
 from safara_maintenance import crear_paquete_financiero_descargable, run_google_maintenance
 from safara_poll_display import agrupar_por_instrumento
+from safara_session_persistence import (
+    SESSION_BRIDGE_JS,
+    new_session_token,
+    session_token_hash,
+)
 from safara_ensayos import (
     QUORUM_ENSAYO_MINIMO,
     ciclos_que_deben_cerrarse,
@@ -66,6 +71,10 @@ st.set_page_config(
     page_title="Safara Percussion - App Oficial",
     layout="centered",
     initial_sidebar_state="collapsed",
+)
+
+session_bridge = st.components.v2.component(
+    "safara_browser_session", js=SESSION_BRIDGE_JS
 )
 
 # --- FRASES DE CHAPAS SAFARA PARA LA CABECERA ---
@@ -987,6 +996,30 @@ def reiniciar_estado_si_cambia_backend():
 
 reiniciar_estado_si_cambia_backend()
 
+# Streamlit reinicia session_state al refrescar. Un componente mínimo conserva
+# solo un token opaco en la pestaña del navegador; Supabase decide si sigue vivo.
+accion_sesion_navegador = st.session_state.get("_accion_sesion_navegador", "")
+token_sesion_pendiente = st.session_state.get("_token_sesion_pendiente", "")
+estado_sesion_navegador = session_bridge(
+    key="safara_browser_session",
+    data={
+        "action": accion_sesion_navegador,
+        "token": token_sesion_pendiente,
+    },
+    on_session_token_change=lambda: None,
+)
+token_sesion_navegador = getattr(
+    estado_sesion_navegador, "session_token", ""
+) or ""
+if not session_token_hash(token_sesion_navegador):
+  token_sesion_navegador = ""
+if (
+    accion_sesion_navegador == "set"
+    and token_sesion_navegador == token_sesion_pendiente
+) or (accion_sesion_navegador == "clear" and not token_sesion_navegador):
+  st.session_state.pop("_accion_sesion_navegador", None)
+  st.session_state.pop("_token_sesion_pendiente", None)
+
 # La navegación se conoce antes de cargar datos remotos. Así el primer acceso
 # solo prepara la sección de inicio y nunca toda la aplicación.
 if (
@@ -1750,7 +1783,9 @@ def cargar_actuaciones_desde_fuentes():
 if (
     "actuaciones" not in st.session_state
     and usuario_autenticado_en_sesion()
-    and st.session_state.get("seccion_principal_safara") in {"Agenda & Bolos", "Administración"}
+    and st.session_state.get("seccion_principal_safara") in {
+        "Nuestras Movidas", "Agenda & Bolos", "Administración"
+    }
 ):
   st.session_state.actuaciones = cargar_actuaciones_desde_fuentes()
 
@@ -2260,6 +2295,48 @@ def es_administrador(nombre):
   )
 
 
+def almacenamiento_sesiones_navegador():
+  storage = obtener_almacenamiento_google() if supabase_storage_enabled(st.secrets) else None
+  return storage if usar_almacenamiento_supabase(storage) else None
+
+
+def activar_sesion_navegador(nombre):
+  """Emite una sesión revocable sin enviar la contraseña al navegador."""
+  storage = almacenamiento_sesiones_navegador()
+  if storage is None:
+    return False
+  token = new_session_token()
+  try:
+    if not storage.crear_sesion_navegador(nombre, session_token_hash(token)):
+      return False
+  except SupabaseStorageOperationError:
+    return False
+  st.session_state.token_sesion_servidor = token
+  st.session_state.ultima_renovacion_sesion = datetime.datetime.now()
+  st.session_state["_accion_sesion_navegador"] = "set"
+  st.session_state["_token_sesion_pendiente"] = token
+  st.session_state.pop("_token_sesion_rechazado", None)
+  return True
+
+
+def cerrar_sesion_navegador():
+  """Revoca la sesión actual y ordena borrar el token del navegador."""
+  token = st.session_state.pop("token_sesion_servidor", "")
+  token_hash = session_token_hash(token)
+  if token_hash:
+    storage = almacenamiento_sesiones_navegador()
+    if storage is not None:
+      try:
+        storage.revocar_sesion_navegador(token_hash)
+      except SupabaseStorageOperationError:
+        pass
+  st.session_state["_token_sesion_rechazado"] = token
+  st.session_state["_accion_sesion_navegador"] = "clear"
+  st.session_state["_token_sesion_pendiente"] = ""
+  st.session_state.pop("ultima_renovacion_sesion", None)
+  st.session_state.usuario_autenticado = None
+
+
 if "usuarios_registrados" not in st.session_state:
   st.session_state.usuarios_registrados = cargar_usuarios_seguro()
 
@@ -2283,6 +2360,40 @@ if "bloqueado_hasta" not in st.session_state:
 
 if "mostrar_recuperacion" not in st.session_state:
   st.session_state.mostrar_recuperacion = False
+
+# Una recarga crea una nueva conexión Streamlit. Restauramos solo sesiones que
+# siguen activas en la base privada y cuyo usuario continúa habilitado.
+if (
+    not st.session_state.usuario_autenticado
+    and token_sesion_navegador
+    and st.session_state.get("_accion_sesion_navegador") != "clear"
+    and token_sesion_navegador != st.session_state.get("_token_sesion_rechazado")
+):
+  storage_sesion = almacenamiento_sesiones_navegador()
+  error_recuperacion = False
+  try:
+    nombre_recuperado = (
+        storage_sesion.confirmar_sesion_navegador(
+            session_token_hash(token_sesion_navegador)
+        )
+        if storage_sesion is not None else None
+    )
+  except SupabaseStorageOperationError:
+    nombre_recuperado = None
+    error_recuperacion = True
+  if nombre_recuperado and nombre_recuperado not in st.session_state.usuarios_registrados:
+    cargar_usuarios_seguro.clear()
+    st.session_state.usuarios_registrados = cargar_usuarios_seguro()
+  if nombre_recuperado in st.session_state.usuarios_registrados:
+    st.session_state.usuario_autenticado = nombre_recuperado
+    st.session_state.ultimo_acceso = datetime.datetime.now()
+    st.session_state.token_sesion_servidor = token_sesion_navegador
+    st.session_state.ultima_renovacion_sesion = datetime.datetime.now()
+    st.rerun()
+  elif not nombre_recuperado and not error_recuperacion:
+    st.session_state["_token_sesion_rechazado"] = token_sesion_navegador
+    st.session_state["_accion_sesion_navegador"] = "clear"
+    st.rerun()
 
 # El retorno de Google abre una pestaña independiente. Recuperamos la sesión
 # únicamente si vuelve un código de OAuth con un estado cifrado y firmado que
@@ -2310,9 +2421,33 @@ if st.session_state.usuario_autenticado:
   ahora = datetime.datetime.now()
   tiempo_inactivo = ahora - st.session_state.ultimo_acceso
   if tiempo_inactivo > datetime.timedelta(minutes=30):
-    st.session_state.usuario_autenticado = None
+    cerrar_sesion_navegador()
+    st.rerun()
   else:
     st.session_state.ultimo_acceso = ahora
+    token_servidor = st.session_state.get("token_sesion_servidor", "")
+    ultima_renovacion = st.session_state.get("ultima_renovacion_sesion")
+    if token_servidor and (
+        not ultima_renovacion
+        or ahora - ultima_renovacion > datetime.timedelta(minutes=5)
+    ):
+      storage_sesion = almacenamiento_sesiones_navegador()
+      if storage_sesion is not None:
+        try:
+          nombre_renovado = storage_sesion.confirmar_sesion_navegador(
+              session_token_hash(token_servidor)
+          )
+        except SupabaseStorageOperationError:
+          nombre_renovado = st.session_state.usuario_autenticado
+        if nombre_renovado != st.session_state.usuario_autenticado:
+          cerrar_sesion_navegador()
+          st.rerun()
+        st.session_state.ultima_renovacion_sesion = ahora
+    elif not token_servidor and not st.session_state.get("_alta_sesion_intentada"):
+      # También adopta las sesiones que ya estaban abiertas al desplegar.
+      st.session_state["_alta_sesion_intentada"] = True
+      if activar_sesion_navegador(st.session_state.usuario_autenticado):
+        st.rerun()
 
 # ==============================================================================
 # --- PANTALLA DE ACCESO Y REGISTRO --------------------------------------------
@@ -2381,6 +2516,12 @@ if not st.session_state.usuario_autenticado:
           st.session_state.pop("mantenimiento_google_comprobado", None)
           st.session_state.fallos_acceso = 0
           st.session_state.bloqueado_hasta = None
+          st.session_state["_alta_sesion_intentada"] = True
+          if not activar_sesion_navegador(nombre_login):
+            st.warning(
+                "Has accedido, pero no se pudo activar la sesión al refrescar. "
+                "Inténtalo de nuevo más tarde."
+            )
           registrar_auditoria_en_segundo_plano("inicio_sesion", nombre_login)
           st.success(f"¡Bienvenido de nuevo, {nombre_login}!")
           st.rerun()
@@ -2632,7 +2773,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 with col_head_right:
   st.markdown('<div class="btn-logout-discreto">', unsafe_allow_html=True)
   if st.button("⏻ ¡Me pirooooo!", key="btn_logout_piro"):
-    st.session_state.usuario_autenticado = None
+    cerrar_sesion_navegador()
     st.session_state.mostrar_recuperacion = False
     st.rerun()
   st.markdown("</div>", unsafe_allow_html=True)
@@ -2864,7 +3005,7 @@ if seccion_activa == "Nuestras Movidas":
   )
 
   actuaciones_validas = [
-      actuacion for actuacion in st.session_state.actuaciones
+      actuacion for actuacion in st.session_state.get("actuaciones", [])
       if str(actuacion.get("estado", "")).upper() != "ANULADA"
   ]
   actuaciones_por_anio = {}
@@ -2984,7 +3125,7 @@ if seccion_activa == "Agenda & Bolos":
       unsafe_allow_html=True,
   )
 
-  actuaciones_list = st.session_state.actuaciones
+  actuaciones_list = st.session_state.get("actuaciones", [])
 
   if not actuaciones_list:
     st.info("No hay actuaciones o bolos registrados por ahora.")

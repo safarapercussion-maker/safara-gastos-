@@ -220,6 +220,53 @@ class SupabaseSafaraStorage:
 
         return bool(self._run(callback))
 
+    def crear_sesion_navegador(self, nombre: str, token_hash: str) -> bool:
+        """Guarda solo la huella del token tras verificar la contraseña."""
+        def callback(cursor):
+            cursor.execute(
+                "delete from safara.sesiones_navegador where caduca_en <= now()"
+            )
+            cursor.execute(
+                """insert into safara.sesiones_navegador
+                   (token_hash, usuario_id, password_hash_al_crear, caduca_en)
+                   select %s, id, password_hash, now() + interval '30 minutes'
+                   from safara.usuarios
+                   where lower(btrim(nombre)) = lower(btrim(%s)) and activo
+                   returning token_hash""",
+                (token_hash, nombre),
+            )
+            return cursor.fetchone() is not None
+
+        return bool(self._run(callback))
+
+    def confirmar_sesion_navegador(self, token_hash: str) -> str | None:
+        """Recupera y renueva una sesión activa sin confiar en el navegador."""
+        def callback(cursor):
+            cursor.execute(
+                """update safara.sesiones_navegador s
+                   set ultimo_uso = now(), caduca_en = now() + interval '30 minutes'
+                   from safara.usuarios u
+                   where s.token_hash = %s and s.usuario_id = u.id
+                     and u.activo and s.password_hash_al_crear = u.password_hash
+                     and s.caduca_en > now()
+                   returning u.nombre""",
+                (token_hash,),
+            )
+            row = cursor.fetchone()
+            return str(row["nombre"]) if row else None
+
+        return self._run(callback)
+
+    def revocar_sesion_navegador(self, token_hash: str) -> None:
+        """Invalida inmediatamente el token del dispositivo que cierra sesión."""
+        def callback(cursor):
+            cursor.execute(
+                "delete from safara.sesiones_navegador where token_hash = %s",
+                (token_hash,),
+            )
+
+        self._run(callback)
+
     def actualizar_rol_usuario(self, objetivo: str, nuevo_rol: str, actor: str) -> bool:
         """Concede o retira administración con controles dentro de la transacción."""
         if nuevo_rol not in {"admin", "usuario"}:

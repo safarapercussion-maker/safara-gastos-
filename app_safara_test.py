@@ -2558,18 +2558,29 @@ if not st.session_state.usuario_autenticado:
 
   with tab_registro:
     primer_usuario = not st.session_state.usuarios_registrados
-    with st.form("form_registro_completo", clear_on_submit=True):
-      reg_nombre = st.text_input("Nombre y Apellidos *")
-      reg_email = st.text_input("Correo Electrónico *")
-      reg_tel = st.text_input("Teléfono Móvil de contacto *")
+    registro_version = st.session_state.get("registro_version", 0)
+    registro_key = f"registro_{registro_version}"
+    if st.session_state.pop("registro_alta_confirmada", False):
+      st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
+    with st.form(f"form_{registro_key}", clear_on_submit=False):
+      avisos = {}
+      reg_nombre = st.text_input("Nombre y Apellidos *", key=f"{registro_key}_nombre")
+      avisos["nombre"] = st.empty()
+      reg_email = st.text_input("Correo Electrónico *", key=f"{registro_key}_email")
+      avisos["email"] = st.empty()
+      reg_tel = st.text_input("Teléfono Móvil de contacto *", key=f"{registro_key}_tel")
+      avisos["tel"] = st.empty()
       reg_password = st.text_input(
           "Contraseña de Acceso *",
           type="password",
+          key=f"{registro_key}_password",
           help="Mínimo 12 caracteres, con letras y números.",
       )
+      avisos["password"] = st.empty()
       reg_password_confirm = st.text_input(
-          "Repite la contraseña *", type="password"
+          "Repite la contraseña *", type="password", key=f"{registro_key}_confirm"
       )
+      avisos["confirm"] = st.empty()
 
       token_bootstrap = ""
       codigo_invitacion = ""
@@ -2580,6 +2591,7 @@ if not st.session_state.usuario_autenticado:
         token_bootstrap = st.text_input(
             "Secreto de configuración inicial *",
             type="password",
+            key=f"{registro_key}_bootstrap",
             help="Solo está en Streamlit Secrets; no se guarda en la aplicación.",
         )
       else:
@@ -2587,21 +2599,24 @@ if not st.session_state.usuario_autenticado:
             "Para proteger al grupo, las nuevas altas requieren un código de invitación de un solo uso."
         )
         codigo_invitacion = st.text_input(
-            "Código de invitación *", type="password"
+            "Código de invitación *", type="password", key=f"{registro_key}_invitacion"
         )
+      avisos["codigo"] = st.empty()
 
       st.markdown("**Fecha de Nacimiento (Día / Mes / Año):**")
       col_d, col_m, col_a = st.columns(3)
       with col_d:
-        reg_dia = st.number_input("Día", 1, 31, 15)
+        reg_dia = st.number_input("Día", 1, 31, 15, key=f"{registro_key}_dia")
       with col_m:
-        reg_mes = st.number_input("Mes", 1, 12, 6)
+        reg_mes = st.number_input("Mes", 1, 12, 6, key=f"{registro_key}_mes")
       with col_a:
-        reg_anio = st.number_input("Año", 1950, 2018, 1998)
+        reg_anio = st.number_input("Año", 1950, 2018, 1998, key=f"{registro_key}_anio")
 
+      avisos["fecha"] = st.empty()
       reg_instrumento = st.selectbox(
           "Instrumento Principal",
           ["Repenike", "Caja", "Surdo", "Surdo de contra", "Ganza (bailarinas)"],
+          key=f"{registro_key}_instrumento",
       )
 
       st.markdown("---")
@@ -2616,8 +2631,10 @@ if not st.session_state.usuario_autenticado:
       )
 
       reg_acepta_rgpd = st.checkbox(
-          "Acepto la política de privacidad y autorizo derechos de imagen *"
+          "Acepto la política de privacidad y autorizo derechos de imagen *",
+          key=f"{registro_key}_rgpd",
       )
+      avisos["rgpd"] = st.empty()
 
       btn_reg_submit = st.form_submit_button("SOLICITAR ALTA")
 
@@ -2631,34 +2648,43 @@ if not st.session_state.usuario_autenticado:
             normalized_name_key(nombre_limpio) == normalized_name_key(nombre)
             for nombre in st.session_state.usuarios_registrados
         )
-        if not (reg_nombre and reg_email and reg_tel and reg_password):
-          st.error("Por favor, completa todos los campos obligatorios.")
-        elif error_nombre:
-          st.error(error_nombre)
-        elif not email_limpio:
-          st.error("Introduce un correo electrónico válido.")
-        elif not telefono_limpio:
-          st.error("Introduce un teléfono móvil válido.")
-        elif error_password:
-          st.error(error_password)
-        elif reg_password != reg_password_confirm:
-          st.error("Las contraseñas no coinciden.")
-        elif not reg_acepta_rgpd:
-          st.warning(
-              "Debes aceptar la casilla de Protección de Datos e Imagen."
-          )
+        errores = {}
+        if error_nombre:
+          errores["nombre"] = error_nombre
         elif ya_registrado:
-          st.error("Este nombre ya está registrado en el sistema.")
-        elif primer_usuario and not verify_bootstrap_token(
-            token_bootstrap, obtener_token_bootstrap()
-        ):
-          st.error(
-              "No se ha podido verificar la configuración inicial. Revisa el secreto de Streamlit."
-          )
-        elif not primer_usuario and not usar_almacenamiento_supabase() and not invitacion_valida(codigo_invitacion):
-          st.error("El código de invitación no es válido, ya se ha usado o ha caducado.")
-        else:
-          fecha_nac_str = f"{reg_dia:02d}/{reg_mes:02d}/{reg_anio}"
+          errores["nombre"] = "Este nombre ya está registrado en el sistema."
+        if not email_limpio:
+          errores["email"] = "Introduce un correo electrónico válido."
+        if not telefono_limpio:
+          errores["tel"] = "Introduce un teléfono móvil válido."
+        if error_password:
+          errores["password"] = error_password
+        if not reg_password_confirm:
+          errores["confirm"] = "Repite la contraseña."
+        elif reg_password != reg_password_confirm:
+          errores["confirm"] = "Las contraseñas no coinciden."
+        try:
+          fecha_nac = datetime.date(reg_anio, reg_mes, reg_dia)
+        except ValueError:
+          errores["fecha"] = "Introduce una fecha de nacimiento válida."
+        if not reg_acepta_rgpd:
+          errores["rgpd"] = "Debes aceptar la casilla de Protección de Datos e Imagen."
+
+        error_invitacion = "El código de invitación no es válido, ya se ha usado o ha caducado."
+        if primer_usuario and not verify_bootstrap_token(token_bootstrap, obtener_token_bootstrap()):
+          errores["codigo"] = "El secreto de configuración inicial no es válido."
+        elif not primer_usuario and not codigo_invitacion.strip():
+          errores["codigo"] = "Introduce el código de invitación."
+        elif not primer_usuario and not errores and not usar_almacenamiento_supabase():
+          if not invitacion_valida(codigo_invitacion):
+            errores["codigo"] = error_invitacion
+
+        for campo, mensaje in errores.items():
+          avisos[campo].error(mensaje)
+
+        if not errores:
+          fecha_nac_str = fecha_nac.strftime("%d/%m/%Y")
+          alta_completada = False
           password_salt, password_hash = hash_password(reg_password)
           nuevo_usuario = {
               "rol": "admin" if primer_usuario else "usuario",
@@ -2691,13 +2717,13 @@ if not st.session_state.usuario_autenticado:
             if alta_guardada is None:
               st.error(mensaje_error_conexion)
             elif not alta_guardada:
-              st.error("El código de invitación no es válido, ya se ha usado o ha caducado.")
+              avisos["codigo"].error(error_invitacion)
             else:
               st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
               invalidar_usuarios_compartidos()
               registrar_auditoria("alta_usuario", nombre_limpio, nuevo_usuario["rol"])
               actualizar_informes_y_copias_en_segundo_plano()
-              st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
+              alta_completada = True
           else:
             st.session_state.usuarios_registrados[nombre_limpio] = nuevo_usuario
             if not guardar_usuarios_excel():
@@ -2708,10 +2734,15 @@ if not st.session_state.usuario_autenticado:
             ):
               del st.session_state.usuarios_registrados[nombre_limpio]
               guardar_usuarios_excel()
-              st.error("No se ha podido confirmar el código. Inténtalo de nuevo.")
+              avisos["codigo"].error("No se ha podido confirmar el código. Inténtalo de nuevo.")
             else:
               registrar_auditoria("alta_usuario", nombre_limpio, nuevo_usuario["rol"])
-              st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
+              alta_completada = True
+
+          if alta_completada:
+            st.session_state.registro_version = registro_version + 1
+            st.session_state.registro_alta_confirmada = True
+            st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
   st.stop()

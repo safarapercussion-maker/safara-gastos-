@@ -2656,7 +2656,10 @@ if not st.session_state.usuario_autenticado:
         if not email_limpio:
           errores["email"] = "Introduce un correo electrónico válido."
         if not telefono_limpio:
-          errores["tel"] = "Introduce un teléfono móvil válido."
+          errores["tel"] = (
+              "Introduce un teléfono válido. El número español debe tener 9 dígitos. "
+              "Para otros países, incluye el prefijo internacional."
+          )
         if error_password:
           errores["password"] = error_password
         if not reg_password_confirm:

@@ -3838,8 +3838,9 @@ if seccion_activa == "Administración":
         if not almacenamiento_seguro:
           st.error(error_supabase)
         else:
+          autorizacion_renovada = False
           codigo_google = str(st.query_params.get("code", "")).strip()
-          estado_google = str(st.query_params.get("state", "")).strip()
+          estado_oauth_google = str(st.query_params.get("state", "")).strip()
           error_google = str(st.query_params.get("error", "")).strip()
           detalle_google = str(st.query_params.get("error_description", "")).strip()
           if error_google:
@@ -3850,24 +3851,31 @@ if seccion_activa == "Administración":
                 + (detalle_google[:300] if detalle_google else "Vuelve a iniciarla desde este panel.")
             )
             st.query_params.clear()
-          if codigo_google or estado_google:
-            if not (codigo_google and estado_google):
+          if codigo_google or estado_oauth_google:
+            if not (codigo_google and estado_oauth_google):
               st.error("Google no ha devuelto una autorización completa. Iníciala de nuevo.")
             else:
               try:
                 permiso_cifrado = exchange_code_for_encrypted_token(
-                    configuracion_drive_oauth, codigo_google, estado_google
+                    configuracion_drive_oauth, codigo_google, estado_oauth_google
                 )
                 credenciales_drive = credentials_from_encrypted_token(
                     configuracion_drive_oauth, permiso_cifrado
                 )
-                # Antes de guardar el permiso se comprueba Drive y se crea la
-                # carpeta propia de SAFARA. Un permiso incompleto nunca queda activo.
+                # Al renovar el permiso, se mantiene la carpeta existente y sus
+                # tickets si Google confirma que sigue siendo accesible.
+                autorizacion_anterior = almacenamiento_seguro.obtener_autorizacion_google_drive()
+                carpeta_anterior = str(autorizacion_anterior.get("carpeta_id") or "")
                 preparacion_drive = GoogleSafaraStorage(
                     GoogleStorageConfig.from_secrets(st.secrets),
                     drive_credentials=credenciales_drive,
+                    receipts_folder_id=carpeta_anterior or None,
                 )
-                carpeta_id = preparacion_drive.crear_carpeta_justificantes_propietaria()
+                carpeta_id = (
+                    carpeta_anterior
+                    if preparacion_drive.reutilizar_carpeta_justificantes(carpeta_anterior)
+                    else preparacion_drive.crear_carpeta_justificantes_propietaria()
+                )
                 almacenamiento_seguro.guardar_autorizacion_google_drive(
                     permiso_cifrado, carpeta_id, usuario_actual
                 )
@@ -3875,8 +3883,10 @@ if seccion_activa == "Administración":
                 st.query_params.clear()
                 registrar_auditoria("google_drive_autorizado", usuario_actual)
                 actualizar_informes_y_copias_en_segundo_plano()
+                autorizacion_renovada = True
                 st.success("Google Drive ha quedado autorizado para guardar justificantes.")
-              except (GoogleDriveOAuthOperationError, SupabaseStorageOperationError) as error:
+              except (GoogleDriveOAuthOperationError, SupabaseStorageOperationError,
+                      StorageConfigurationError, StorageOperationError) as error:
                 st.error(str(error))
 
           try:
@@ -3887,16 +3897,34 @@ if seccion_activa == "Administración":
             )
           except SupabaseStorageOperationError:
             drive_autorizado = False
-          if drive_autorizado:
+          error_copia_drive = (
+              "" if autorizacion_renovada else str(estado_google.get("ultimo_error") or "")
+          )
+          if autorizacion_renovada:
+            st.info("Permiso renovado. La copia adicional se está comprobando.")
+          elif drive_autorizado and not error_copia_drive:
             st.success("Drive está autorizado y listo para guardar justificantes.")
-          else:
+          elif drive_autorizado:
+            st.warning(
+                "El permiso de Drive está guardado, pero la última copia adicional "
+                "no se completó. Los gastos y tickets ya registrados siguen protegidos."
+            )
+          if not drive_autorizado or error_copia_drive:
+            if error_copia_drive:
+              st.caption(
+                  "Si Google Auth Platform sigue en estado Prueba, publica allí la "
+                  "aplicación antes de renovar el permiso para evitar que vuelva "
+                  "a caducar a los siete días."
+              )
             url_autorizacion = google_drive_authorization_url(
                 configuracion_drive_oauth, usuario_actual
             )
             st.markdown(
                 f'<a href="{escapar_html(url_autorizacion)}" target="_blank" rel="noopener noreferrer" '
                 'style="display:inline-block;background:#c62828;color:#ffffff;padding:10px 16px;'
-                'border-radius:8px;font-weight:700;text-decoration:none;">AUTORIZAR GOOGLE DRIVE</a>',
+                'border-radius:8px;font-weight:700;text-decoration:none;">'
+                + ("RENOVAR AUTORIZACIÓN DE DRIVE" if drive_autorizado else "AUTORIZAR GOOGLE DRIVE")
+                + "</a>",
                 unsafe_allow_html=True,
             )
             st.caption(

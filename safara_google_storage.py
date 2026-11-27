@@ -242,6 +242,27 @@ class GoogleSafaraStorage:
                 "Google Drive no pudo preparar la carpeta privada de justificantes."
             ) from error
 
+    def reutilizar_carpeta_justificantes(self, folder_id: str) -> bool:
+        """Conserva la carpeta anterior si la autorización renovada puede usarla."""
+        if not _GOOGLE_ID.fullmatch(str(folder_id or "")):
+            return False
+        try:
+            folder = self._drive_client().files().get(
+                fileId=folder_id,
+                fields="id,mimeType,trashed,capabilities(canAddChildren)",
+                supportsAllDrives=True,
+            ).execute()
+            if (
+                folder.get("mimeType") != "application/vnd.google-apps.folder"
+                or folder.get("trashed")
+                or not folder.get("capabilities", {}).get("canAddChildren", False)
+            ):
+                return False
+            self._folder_id = folder_id
+            return True
+        except Exception:
+            return False
+
     def ensure_schema(self) -> None:
         """Establece cabeceras solo en pestañas todavía vacías; nunca migra datos."""
         spreadsheet = self._spreadsheet_client()
@@ -511,6 +532,8 @@ class GoogleSafaraStorage:
     def upload_backup(self, filename: str, content: bytes) -> str:
         """Guarda una copia técnica sin duplicarla si se repite el mismo día."""
         try:
+            from google.auth.exceptions import RefreshError
+            from googleapiclient.errors import HttpError
             from googleapiclient.http import MediaIoBaseUpload
 
             query = (
@@ -557,6 +580,23 @@ class GoogleSafaraStorage:
                 supportsAllDrives=True,
             ).execute()
             return str(created["id"])
+        except RefreshError as error:
+            raise StorageOperationError(
+                "La autorización de Google Drive ha caducado o se ha revocado. "
+                "Vuelve a autorizarla desde Administración > Control."
+            ) from error
+        except HttpError as error:
+            status = getattr(getattr(error, "resp", None), "status", 0)
+            if status in (401, 403):
+                message = (
+                    "Google Drive ha rechazado el permiso para la copia. "
+                    "Reautorízalo desde Administración > Control."
+                )
+            elif status == 404:
+                message = "La carpeta de copias de Drive ya no está disponible."
+            else:
+                message = "Google Drive no ha aceptado la copia adicional."
+            raise StorageOperationError(message) from error
         except Exception as error:
             raise StorageOperationError("No se ha podido guardar la copia de seguridad en Drive.") from error
 

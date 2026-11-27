@@ -1,7 +1,8 @@
 import unittest
 import json
+from unittest.mock import Mock
 
-from safara_google_storage import GoogleStorageConfig, StorageConfigurationError, is_enabled
+from safara_google_storage import GoogleSafaraStorage, GoogleStorageConfig, StorageConfigurationError, is_enabled
 
 
 class GoogleStorageConfigTests(unittest.TestCase):
@@ -58,6 +59,33 @@ class GoogleStorageConfigTests(unittest.TestCase):
         "gcp_service_account_json": json.dumps(service_account),
     })
     self.assertEqual(config.service_account["client_email"], service_account["client_email"])
+
+  def test_renewed_permission_reuses_writable_receipts_folder(self):
+    drive = Mock()
+    drive.files.return_value.get.return_value.execute.return_value = {
+        "id": "A" * 25,
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "capabilities": {"canAddChildren": True},
+    }
+    storage = object.__new__(GoogleSafaraStorage)
+    storage._folder_id = ""
+    storage._drive_client = lambda: drive
+    self.assertTrue(storage.reutilizar_carpeta_justificantes("A" * 25))
+    self.assertEqual(storage._folder_id, "A" * 25)
+    drive.files.return_value.get.assert_called_once()
+
+  def test_renewed_permission_rejects_unwritable_folder(self):
+    drive = Mock()
+    drive.files.return_value.get.return_value.execute.return_value = {
+        "mimeType": "application/vnd.google-apps.folder",
+        "capabilities": {"canAddChildren": False},
+    }
+    storage = object.__new__(GoogleSafaraStorage)
+    storage._folder_id = ""
+    storage._drive_client = lambda: drive
+    self.assertFalse(storage.reutilizar_carpeta_justificantes("A" * 25))
+    self.assertEqual(storage._folder_id, "")
 
 
 if __name__ == "__main__":

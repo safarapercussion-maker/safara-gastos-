@@ -66,6 +66,8 @@ def validate_phone(value):
     phone = "+" + phone[2:]
   if phone and phone[0] != "+":
     phone = "+34" + phone
+  if phone.startswith("+34") and not re.fullmatch(r"\+34[0-9]{9}", phone):
+    return None
   if not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
     return None
   return phone

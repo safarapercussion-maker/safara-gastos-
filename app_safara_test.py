@@ -292,6 +292,27 @@ st.markdown(
     [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary p strong {{
         color: #f6f7fa;
     }}
+    .historial-gasto-datos {{
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 8px 14px;
+        margin: 0;
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }}
+    .historial-gasto-datos dt {{
+        color: #c8d0de;
+        font-weight: 600;
+    }}
+    .historial-gasto-datos dd {{
+        color: #f2f4f8;
+        margin: 0;
+        overflow-wrap: anywhere;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stCaptionContainer"] p {{
+        color: #c8d0de !important;
+        -webkit-text-fill-color: #c8d0de !important;
+    }}
     .historial-gasto-fecha {{
         margin: 8px 0 0;
         padding-bottom: 5px;
@@ -3573,12 +3594,18 @@ if seccion_activa == "Caja & Finanzas":
         )
         with st.container(key=f"historial_gasto_{gasto['ID']}"), st.expander(cabecera):
           categoria, _, detalle = concepto.partition(" - ")
-          st.text(f"Registrado por · {gasto['Usuario']}")
-          st.text(f"Referencia · {gasto['Referencia'] or gasto['ID']}")
-          st.text(f"Fecha · {fecha}")
-          st.text(f"Categoría · {categoria}")
+          datos = [
+              ("Registrado por", gasto["Usuario"]),
+              ("Referencia", gasto["Referencia"] or gasto["ID"]),
+              ("Fecha", fecha),
+              ("Categoría", categoria),
+          ]
           if detalle:
-            st.text(f"Detalle · {detalle}")
+            datos.append(("Detalle", detalle))
+          filas = "".join(
+              f"<dt>{titulo}</dt><dd>{escapar_html(valor)}</dd>" for titulo, valor in datos
+          )
+          st.markdown(f'<dl class="historial-gasto-datos">{filas}</dl>', unsafe_allow_html=True)
           enlace = str(gasto.get("Enlace Ticket") or "")
           try:
             destino = urlsplit(enlace)

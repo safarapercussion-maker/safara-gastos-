@@ -907,8 +907,8 @@ class SupabaseSafaraStorage:
             cursor.execute(
                 """insert into safara.gastos
                    (fecha, usuario_id, concepto, importe, fichero, referencia_anual, estado_reembolso,
-                    enlace_ticket, drive_file_id, mime_type, estado_justificante)
-                   values (%s,%s,%s,%s,%s,%s,%s,null,null,%s,'PENDIENTE_DRIVE') returning id""",
+                    enlace_ticket, drive_file_id, mime_type, estado_justificante, aviso_correo_estado)
+                   values (%s,%s,%s,%s,%s,%s,%s,null,null,%s,'PENDIENTE_DRIVE','PENDIENTE') returning id""",
                 (
                     self._as_date(data["Fecha"]), usuario_id,
                     data["Concepto"], data["Importe"], fichero, referencia,
@@ -938,6 +938,67 @@ class SupabaseSafaraStorage:
             return record
 
         return self._run(callback)
+
+    def historial_gastos(self, busqueda: str, mes: Any, estado: str, pagina: int, tamano: int):
+        """Devuelve una página y una fila extra para saber si hay más resultados."""
+        def callback(cursor):
+            condiciones = []
+            parametros = []
+            if busqueda:
+                literal = busqueda.lower().replace("!", "!!").replace("%", "!%").replace("_", "!_")
+                condiciones.append(
+                    "lower(concat_ws(' ', g.referencia_anual, g.concepto, u.nombre)) like %s escape '!'"
+                )
+                parametros.append(f"%{literal}%")
+            if mes:
+                condiciones.append("g.fecha >= %s and g.fecha < (%s::date + interval '1 month')")
+                parametros.extend((mes, mes))
+            if estado:
+                condiciones.append("g.estado_reembolso = %s")
+                parametros.append(estado)
+            filtro = " where " + " and ".join(condiciones) if condiciones else ""
+            cursor.execute(
+                """select g.id as "ID", g.referencia_anual as "Referencia", g.fecha as "Fecha",
+                   u.nombre as "Usuario", g.concepto as "Concepto", g.importe as "Importe",
+                   g.estado_reembolso as "Reembolsado", g.enlace_ticket as "Enlace Ticket",
+                   g.estado_justificante as "Estado Justificante", g.aviso_correo_estado as "Aviso Correo",
+                   coalesce(g.aviso_correo_reserva_hasta > now(), false) as "Aviso En Curso"
+                   from safara.gastos g join safara.usuarios u on u.id=g.usuario_id"""
+                + filtro + " order by g.fecha desc, g.id desc limit %s offset %s",
+                (*parametros, tamano + 1, pagina * tamano),
+            )
+            filas = cursor.fetchall()
+            return [dict(fila) for fila in filas[:tamano]], len(filas) > tamano
+        return self._run(callback)
+
+    def reservar_aviso_gasto(self, gasto_id: int, intento: str):
+        """Reserva el envío en la base para impedir dos intentos simultáneos."""
+        def callback(cursor):
+            cursor.execute(
+                """update safara.gastos g
+                   set aviso_correo_estado='EN_CURSO', aviso_correo_intento=%s,
+                       aviso_correo_reserva_hasta=now() + interval '5 minutes'
+                   from safara.usuarios u
+                   where g.id=%s and u.id=g.usuario_id and g.estado_reembolso='PENDIENTE ABONO'
+                     and (g.aviso_correo_estado in ('PENDIENTE','ERROR')
+                          or (g.aviso_correo_estado='EN_CURSO' and g.aviso_correo_reserva_hasta <= now()))
+                   returning g.referencia_anual as referencia, g.fecha, g.concepto,
+                             g.importe, u.nombre as usuario""",
+                (intento, gasto_id),
+            )
+            fila = cursor.fetchone()
+            return dict(fila) if fila else None
+        return self._run(callback)
+
+    def cerrar_aviso_gasto(self, gasto_id: int, intento: str, enviado: bool) -> None:
+        def callback(cursor):
+            cursor.execute(
+                """update safara.gastos
+                   set aviso_correo_estado=%s, aviso_correo_intento=null, aviso_correo_reserva_hasta=null
+                   where id=%s and aviso_correo_intento=%s""",
+                ("ENVIADO" if enviado else "ERROR", gasto_id, intento),
+            )
+        self._run(callback)
 
     def obtener_justificante_pendiente(self, gasto_id: int) -> dict[str, Any] | None:
         def callback(cursor):

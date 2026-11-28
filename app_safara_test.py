@@ -233,6 +233,74 @@ st.markdown(
         font-family: 'Montserrat', sans-serif !important;
     }}
 
+    /* El historial usa una flecha CSS, independiente de la fuente de iconos. */
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] details {{
+        background: #15171d;
+        border: 1px solid #353943;
+        border-radius: 12px;
+        overflow: hidden;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary {{
+        padding: 12px 14px;
+        min-height: 52px;
+        color: #f3f4f7;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary:hover,
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] details[open] > summary {{
+        background: #221a1d;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary:focus-visible {{
+        outline: 2px solid #ff776a;
+        outline-offset: -3px;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary > span {{
+        display: flex;
+        width: 100%;
+        min-width: 0;
+        align-items: center;
+        gap: 10px;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary > span::before {{
+        content: "";
+        display: block;
+        width: 7px;
+        height: 7px;
+        flex: 0 0 7px;
+        margin-right: 3px;
+        border-right: 2px solid #ff776a;
+        border-bottom: 2px solid #ff776a;
+        transform: rotate(-45deg);
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] details[open] > summary > span::before {{
+        transform: rotate(45deg);
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary span:has(> [data-testid="stIconMaterial"]) {{
+        display: none;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary > span > div {{
+        flex: 1 1 auto;
+        min-width: 0;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary p {{
+        margin: 0;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.45;
+        color: #d7dce6;
+        font-size: 0.88rem;
+    }}
+    [class*="st-key-historial_gasto_"] [data-testid="stExpander"] summary p strong {{
+        color: #f6f7fa;
+    }}
+    .historial-gasto-fecha {{
+        margin: 8px 0 0;
+        padding-bottom: 5px;
+        border-bottom: 1px solid #353943;
+        color: #d7dce6;
+        font-size: 0.85rem;
+        font-weight: 700;
+    }}
+
     .stApp {{
         {bg_css_login}
         color: #FFFFFF !important;
@@ -3488,15 +3556,22 @@ if seccion_activa == "Caja & Finanzas":
       for gasto in gastos:
         fecha = gasto["Fecha"].strftime("%d/%m/%Y")
         if fecha != fecha_anterior:
-          st.caption(fecha)
+          st.markdown(
+              f'<div class="historial-gasto-fecha">{fecha}</div>',
+              unsafe_allow_html=True,
+          )
           fecha_anterior = fecha
 
         abonado = gasto["Reembolsado"] == "ABONADO"
         estado_visual = "Abonado" if abonado else "Pendiente de abono"
         concepto = str(gasto["Concepto"])
-        resumen = concepto if len(concepto) <= 72 else concepto[:69] + "…"
-        resumen = re.sub(r"([\\\x60*_\[\]<>])", r"\\\1", resumen)
-        with st.expander(f"{resumen} · {formato_espanol(gasto['Importe'])} € · {estado_visual}"):
+        resumen = re.sub(r"([\\\x60*_{}\[\]<>:#~$|!])", r"\\\1", " ".join(concepto.split()))
+        color_estado = "green" if abonado else "orange"
+        cabecera = (
+            f"**{resumen}**  \n"
+            f"**{formato_espanol(gasto['Importe'])} €** · :{color_estado}[{estado_visual}]"
+        )
+        with st.container(key=f"historial_gasto_{gasto['ID']}"), st.expander(cabecera):
           categoria, _, detalle = concepto.partition(" - ")
           st.text(f"Registrado por · {gasto['Usuario']}")
           st.text(f"Referencia · {gasto['Referencia'] or gasto['ID']}")

@@ -6,6 +6,7 @@ import random
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlsplit
 
 try:
   from zoneinfo import ZoneInfo
@@ -55,6 +56,7 @@ from safara_supabase_storage import (
     is_enabled as supabase_storage_enabled,
 )
 from safara_maintenance import crear_paquete_financiero_descargable, run_google_maintenance
+from safara_correo_gastos import CorreoGastosConfig, enviar_aviso_gasto
 from safara_poll_display import agrupar_por_instrumento
 from safara_session_persistence import (
     SESSION_BRIDGE_JS,
@@ -884,6 +886,22 @@ def diagnostico_supabase_para_administracion():
   except SupabaseStorageOperationError:
     return None, "No se puede contactar ahora con la base segura de Supabase."
   return almacenamiento, ""
+
+
+@st.cache_resource(show_spinner=False)
+def obtener_ejecutor_correo_gastos():
+  return ThreadPoolExecutor(max_workers=2, thread_name_prefix="safara-correo-gastos")
+
+
+def programar_aviso_gasto(database, gasto_id):
+  try:
+    config = CorreoGastosConfig.from_secrets(st.secrets)
+    if config is None:
+      return False
+    obtener_ejecutor_correo_gastos().submit(enviar_aviso_gasto, database, config, gasto_id)
+    return True
+  except (AttributeError, TypeError, ValueError, RuntimeError):
+    return False
 
 
 @st.cache_resource(show_spinner=False)
@@ -2560,8 +2578,6 @@ if not st.session_state.usuario_autenticado:
     primer_usuario = not st.session_state.usuarios_registrados
     registro_version = st.session_state.get("registro_version", 0)
     registro_key = f"registro_{registro_version}"
-    if st.session_state.pop("registro_alta_confirmada", False):
-      st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
     with st.form(f"form_{registro_key}", clear_on_submit=False):
       avisos = {}
       reg_nombre = st.text_input("Nombre y Apellidos *", key=f"{registro_key}_nombre")
@@ -2746,6 +2762,8 @@ if not st.session_state.usuario_autenticado:
             st.session_state.registro_version = registro_version + 1
             st.session_state.registro_alta_confirmada = True
             st.rerun()
+    if st.session_state.pop("registro_alta_confirmada", False):
+      st.success("¡Alta creada! Ya puedes acceder con tu contraseña.")
     st.markdown("</div>", unsafe_allow_html=True)
 
   st.stop()
@@ -3414,7 +3432,8 @@ if seccion_activa == "Caja & Finanzas":
               )
             else:
               aviso_justificante = "El gasto queda pendiente de revisión en el panel de administración."
-            st.success("¡Gasto registrado con éxito!")
+            st.success("¡Gasto registrado! Tesorero, devuélveme la pasta, que la vida está muy cara.")
+            programar_aviso_gasto(storage, int(nuevo_reg["ID"]))
             st.session_state.pop("paquete_financiero", None)
             # Supabase ya confirmó el gasto y, si procede, el ticket. Ahora se
             # actualiza Sheets como vista de consulta; un fallo externo nunca
@@ -3425,71 +3444,105 @@ if seccion_activa == "Caja & Finanzas":
             st.error("No se ha podido guardar el gasto. Inténtalo de nuevo.")
 
   with tab_sub_hist:
-    st.markdown(
-        "<p style='color: #E74C3C; font-size: 14px; font-weight:"
-        " 800;'>REGISTRO HISTÓRICO DE GASTOS</p>",
-        unsafe_allow_html=True,
-    )
-
-    try:
-      if (
-          not st.session_state.gastos.empty
-          and len(st.session_state.gastos) > 0
-      ):
-        filtro_estado = st.selectbox(
-            "Filtrar Estado", ["Todos", "Pendientes Abono", "Abonados"]
+    @st.fragment(run_every="15s")
+    def mostrar_historial_gastos():
+      st.markdown("#### Historial de gastos")
+      with st.form("filtros_historial_gastos", border=False):
+        buscar = st.text_input(
+            "Buscar gastos", placeholder="Concepto, comercio, referencia o Safarer",
+            max_chars=100,
         )
-        df_view = st.session_state.gastos.copy()
-        if filtro_estado == "Pendientes Abono":
-          df_view = df_view[df_view["Reembolsado"] == "PENDIENTE ABONO"]
-        elif filtro_estado == "Abonados":
-          df_view = df_view[df_view["Reembolsado"] == "ABONADO"]
+        col_mes, col_estado = st.columns(2)
+        with col_mes:
+          mes = st.date_input("Mes del gasto", value=None, format="DD/MM/YYYY",
+                              help="Elige cualquier día del mes que quieras consultar.")
+        with col_estado:
+          estado = st.selectbox("Estado", ("Todos", "Pendiente de abono", "Abonado"))
+        filtrar = st.form_submit_button("Aplicar filtros")
 
-        for _, row in df_view.iterrows():
-          estado_txt = str(row["Reembolsado"])
-          color_badge = "#2ECC71" if estado_txt == "ABONADO" else "#E74C3C"
+      if filtrar:
+        st.session_state.historial_filtros_gastos = (
+            buscar.strip(), mes.replace(day=1) if mes else None, estado
+        )
+        st.session_state.historial_pagina_gastos = 0
+      buscar, mes, estado = st.session_state.get("historial_filtros_gastos", ("", None, "Todos"))
+      pagina = st.session_state.get("historial_pagina_gastos", 0)
+      estado_guardado = {"Pendiente de abono": "PENDIENTE ABONO", "Abonado": "ABONADO"}
+      database = obtener_almacenamiento_google()
+      if not usar_almacenamiento_supabase(database):
+        st.warning("El historial no está disponible en este momento.")
+        return
+      try:
+        gastos, hay_mas = database.historial_gastos(
+            buscar, mes, estado_guardado.get(estado, ""), pagina, 15
+        )
+      except SupabaseStorageOperationError:
+        st.warning("No se ha podido cargar el historial. Inténtalo de nuevo.")
+        return
+
+      if not gastos:
+        st.info("No hay gastos que coincidan con los filtros.")
+
+      fecha_anterior = None
+      admin = es_administrador(usuario_actual)
+      for gasto in gastos:
+        fecha = gasto["Fecha"].strftime("%d/%m/%Y")
+        if fecha != fecha_anterior:
+          st.caption(fecha)
+          fecha_anterior = fecha
+
+        abonado = gasto["Reembolsado"] == "ABONADO"
+        estado_visual = "Abonado" if abonado else "Pendiente de abono"
+        concepto = str(gasto["Concepto"])
+        resumen = concepto if len(concepto) <= 72 else concepto[:69] + "…"
+        resumen = re.sub(r"([\\\x60*_\[\]<>])", r"\\\1", resumen)
+        with st.expander(f"{resumen} · {formato_espanol(gasto['Importe'])} € · {estado_visual}"):
+          categoria, _, detalle = concepto.partition(" - ")
+          st.text(f"Registrado por · {gasto['Usuario']}")
+          st.text(f"Referencia · {gasto['Referencia'] or gasto['ID']}")
+          st.text(f"Fecha · {fecha}")
+          st.text(f"Categoría · {categoria}")
+          if detalle:
+            st.text(f"Detalle · {detalle}")
+          enlace = str(gasto.get("Enlace Ticket") or "")
           try:
-            fecha_visual = datetime.date.fromisoformat(
-                str(row["Fecha"])
-            ).strftime("%d/%m/%Y")
-          except:
-            fecha_visual = str(row["Fecha"])
-
-          st.markdown(
-              f"""
-                        <div style="background: #121212; border-left: 5px solid #E74C3C; border: 1px solid #2A2A2A; padding: 14px; border-radius: 12px; margin-bottom: 12px;">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <strong style="color: #FFFFFF; font-size: 14px;">{escapar_html(row['Concepto'])}</strong>
-                                <span style="background: {color_badge}; color: #000; padding: 2px 7px; border-radius: 6px; font-size: 9px; font-weight: 800;">{estado_txt}</span>
-                            </div>
-                            <div style="margin-top: 6px; font-size: 12px; color: #FFFFFF;">
-                                <span>Colaborador:</span> <b>{escapar_html(row['Usuario'])}</b> | <span>Fecha:</span> {escapar_html(fecha_visual)} | <span style="color: #E74C3C; font-weight: 800;">{formato_espanol(row['Importe'])} €</span>
-                            </div>
-                        </div>
-                    """,
-              unsafe_allow_html=True,
-          )
-
-          fich = row.get("Fichero")
-          if fich and isinstance(fich, str) and str(fich) != "nan":
-            enlace_drive = str(row.get("Enlace Ticket", ""))
-            if enlace_drive.startswith("https://"):
-              st.link_button(f"Abrir Ticket (Gasto #{row['ID']})", enlace_drive)
-              continue
-            path_fich = os.path.join(RECEIPTS_DIR, fich)
-            if os.path.exists(path_fich):
-              with st.expander(f"Previsualizar Ticket (Gasto #{row['ID']})"):
-                ext = fich.lower().split(".")[-1]
-                if ext in ["png", "jpg", "jpeg"]:
-                  st.image(path_fich, use_container_width=True)
-                elif ext == "pdf":
-                  st.write(f"📄 Archivo PDF adjunto: `{fich}`")
+            destino = urlsplit(enlace)
+            enlace_valido = destino.scheme == "https" and destino.hostname == "drive.google.com"
+          except ValueError:
+            enlace_valido = False
+          if enlace_valido:
+            st.link_button("Ver justificante", enlace)
+          elif gasto.get("Estado Justificante") == "PENDIENTE_DRIVE":
+            st.caption("Justificante guardado. Pendiente de archivar en Drive.")
+          else:
+            st.caption("El justificante todavía no tiene un enlace disponible.")
+          if admin and gasto["Aviso Correo"]:
+            if gasto["Aviso Correo"] == "ENVIADO":
+              st.caption("Aviso al tesorero enviado")
+            elif gasto["Aviso En Curso"]:
+              st.caption("Enviando aviso al tesorero")
+            elif not abonado:
+              st.caption("Correo pendiente de envío")
+              if st.button("Reintentar aviso", key=f"reintentar_aviso_gasto_{gasto['ID']}"):
+                if programar_aviso_gasto(database, gasto["ID"]):
+                  st.info("Reintento programado.")
                 else:
-                  st.write(f"📁 Archivo adjunto: `{fich}`")
-      else:
-        st.info("No hay gastos registrados todavía.")
-    except Exception as e:
-      st.warning("Cargando historial de gastos...")
+                  st.warning("Falta configurar el envío de correo de SAFARA.")
+
+      if pagina or hay_mas:
+        anterior, posicion, siguiente = st.columns(3)
+        with anterior:
+          if st.button("Anterior", disabled=pagina == 0, key="gastos_pagina_anterior"):
+            st.session_state.historial_pagina_gastos = pagina - 1
+            st.rerun()
+        with posicion:
+          st.caption(f"Página {pagina + 1}")
+        with siguiente:
+          if st.button("Siguiente", disabled=not hay_mas, key="gastos_pagina_siguiente"):
+            st.session_state.historial_pagina_gastos = pagina + 1
+            st.rerun()
+
+    mostrar_historial_gastos()
 
 # --- PESTAÑA 4: PANEL DE ADMINISTRACIÓN ---
 if seccion_activa == "Administración":
